@@ -108,11 +108,12 @@ func TestNewCommandScreenshotClockSeam(t *testing.T) {
 
 func TestUsageErrorWrapsAndUnwraps(t *testing.T) {
 	inner := errors.New("bad usage")
+	wrapped := &clibrowser.UsageError{Err: inner}
 	var shared *clibrowser.UsageError
-	if !errors.As(errors.Join(&clibrowser.UsageError{Err: inner}), &shared) {
+	if !errors.As(wrapped, &shared) {
 		t.Fatal("UsageError must be detectable via errors.As")
 	}
-	if shared.Error() != "bad usage" || shared.Unwrap() != inner {
+	if shared.Error() != "bad usage" || !errors.Is(wrapped, inner) {
 		t.Fatalf("UsageError rendering = %q", shared.Error())
 	}
 }

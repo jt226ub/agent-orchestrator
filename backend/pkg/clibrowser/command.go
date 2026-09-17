@@ -28,6 +28,9 @@ func (e *UsageError) Unwrap() error { return e.Err }
 
 const maxBrowserWaitMillis = 55_000
 
+// UntrustedBegin and UntrustedEnd delimit page-controlled text in CLI output
+// so downstream consumers (agents, transcripts) can treat the wrapped content
+// as untrusted external content.
 const (
 	UntrustedBegin = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>"
 	UntrustedEnd   = "<<<END UNTRUSTED EXTERNAL CONTENT>>>"
@@ -88,7 +91,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Open a URL in this session's browser",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "open", map[string]any{"url": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "open", map[string]any{"url": args[0]}, jsonOutput)
 		},
 	})
 
@@ -98,7 +101,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Print a compact accessibility snapshot with actionable element refs",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "snapshot", map[string]any{"interactive": interactiveOnly}, jsonOutput)
+			return runBrowserAction(t, cmd, "snapshot", map[string]any{"interactive": interactiveOnly}, jsonOutput)
 		},
 	}
 	snapshot.Flags().BoolVar(&interactiveOnly, "interactive", false, "include only actionable elements")
@@ -124,7 +127,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			if actNthSet {
 				actArgs["nth"] = actNth
 			}
-			return runBrowserAction(t, cmd, clock, "act", actArgs, jsonOutput)
+			return runBrowserAction(t, cmd, "act", actArgs, jsonOutput)
 		},
 	}
 	act.Flags().StringVar(&actVerb, "action", "click", "verb to perform on the matched element (click, dblclick, focus, hover, fill, type, check, uncheck)")
@@ -141,7 +144,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Click an element reference from the latest snapshot",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "click", map[string]any{"ref": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "click", map[string]any{"ref": args[0]}, jsonOutput)
 		},
 	})
 
@@ -158,7 +161,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			Short: action.short,
 			Args:  exactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return runBrowserAction(t, cmd, clock, action.name, map[string]any{"ref": args[0]}, jsonOutput)
+				return runBrowserAction(t, cmd, action.name, map[string]any{"ref": args[0]}, jsonOutput)
 			},
 		})
 	}
@@ -168,7 +171,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Drag one element onto another",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "drag", map[string]any{"ref": args[0], "targetRef": args[1]}, jsonOutput)
+			return runBrowserAction(t, cmd, "drag", map[string]any{"ref": args[0], "targetRef": args[1]}, jsonOutput)
 		},
 	})
 
@@ -177,7 +180,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Replace the value of a form control",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "fill", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
+			return runBrowserAction(t, cmd, "fill", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
 		},
 	})
 
@@ -186,7 +189,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Type text at the current cursor position in a form control",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "type", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
+			return runBrowserAction(t, cmd, "type", map[string]any{"ref": args[0], "text": args[1]}, jsonOutput)
 		},
 	})
 
@@ -195,7 +198,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Press a key or modifier chord such as Enter or Control+A",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "press", map[string]any{"key": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "press", map[string]any{"key": args[0]}, jsonOutput)
 		},
 	})
 
@@ -204,7 +207,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Move the pointer over an element",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "hover", map[string]any{"ref": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "hover", map[string]any{"ref": args[0]}, jsonOutput)
 		},
 	})
 
@@ -213,7 +216,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Visually highlight an element without changing page state",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "highlight", map[string]any{"ref": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "highlight", map[string]any{"ref": args[0]}, jsonOutput)
 		},
 	})
 
@@ -222,7 +225,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Remove the current element highlight",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "unhighlight", nil, jsonOutput)
+			return runBrowserAction(t, cmd, "unhighlight", nil, jsonOutput)
 		},
 	})
 
@@ -231,7 +234,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "List this session's browser tabs",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "tabs", nil, jsonOutput)
+			return runBrowserAction(t, cmd, "tabs", nil, jsonOutput)
 		},
 	})
 
@@ -249,7 +252,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			if len(args) == 1 {
 				actionArgs["url"] = args[0]
 			}
-			return runBrowserAction(t, cmd, clock, "tab-new", actionArgs, jsonOutput)
+			return runBrowserAction(t, cmd, "tab-new", actionArgs, jsonOutput)
 		},
 	})
 	tabCmd.AddCommand(&cobra.Command{
@@ -257,7 +260,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Make a browser tab active",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "tab-select", map[string]any{"tabId": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "tab-select", map[string]any{"tabId": args[0]}, jsonOutput)
 		},
 	})
 	tabCmd.AddCommand(&cobra.Command{
@@ -269,7 +272,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			if len(args) == 1 {
 				actionArgs["tabId"] = args[0]
 			}
-			return runBrowserAction(t, cmd, clock, "tab-close", actionArgs, jsonOutput)
+			return runBrowserAction(t, cmd, "tab-close", actionArgs, jsonOutput)
 		},
 	})
 	cmd.AddCommand(tabCmd)
@@ -279,7 +282,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Open and control Chromium's DevTools for the active page",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "devtools-open", nil, jsonOutput)
+			return runBrowserAction(t, cmd, "devtools-open", nil, jsonOutput)
 		},
 	}
 	devtoolsOpen := &cobra.Command{
@@ -287,7 +290,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Open the real Chromium DevTools frontend",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "devtools-open", nil, jsonOutput)
+			return runBrowserAction(t, cmd, "devtools-open", nil, jsonOutput)
 		},
 	}
 	devtoolsCmd.AddCommand(devtoolsOpen)
@@ -296,7 +299,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Close Chromium DevTools",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBrowserAction(t, cmd, clock, "devtools-close", nil, jsonOutput)
+			return runBrowserAction(t, cmd, "devtools-close", nil, jsonOutput)
 		},
 	})
 	cmd.AddCommand(devtoolsCmd)
@@ -310,7 +313,6 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			return runBrowserAction(
 				t,
 				cmd,
-				clock,
 				"scroll",
 				map[string]any{"direction": args[0], "amount": scrollAmount},
 				jsonOutput,
@@ -325,7 +327,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Select an option value",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "select", map[string]any{"ref": args[0], "value": args[1]}, jsonOutput)
+			return runBrowserAction(t, cmd, "select", map[string]any{"ref": args[0], "value": args[1]}, jsonOutput)
 		},
 	})
 
@@ -341,7 +343,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			Short: short,
 			Args:  exactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return runBrowserAction(t, cmd, clock, action, map[string]any{"ref": args[0]}, jsonOutput)
+				return runBrowserAction(t, cmd, action, map[string]any{"ref": args[0]}, jsonOutput)
 			},
 		})
 	}
@@ -356,7 +358,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			if len(args) == 2 {
 				actionArgs["ref"] = args[1]
 			}
-			return runBrowserAction(t, cmd, clock, "get", actionArgs, jsonOutput)
+			return runBrowserAction(t, cmd, "get", actionArgs, jsonOutput)
 		},
 	})
 
@@ -419,7 +421,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			default:
 				args["ms"] = waitMS
 			}
-			return runBrowserAction(t, cmd, clock, "wait", args, jsonOutput)
+			return runBrowserAction(t, cmd, "wait", args, jsonOutput)
 		},
 	}
 	waitCmd.Flags().StringVar(&waitText, "text", "", "wait until visible page text contains this value")
@@ -481,7 +483,6 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			return runBrowserAction(
 				t,
 				cmd,
-				clock,
 				"network-start",
 				map[string]any{"durationSeconds": networkDuration},
 				jsonOutput,
@@ -504,7 +505,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			Short: subcommand.short,
 			Args:  noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return runBrowserAction(t, cmd, clock, "network-"+subcommand.name, nil, jsonOutput)
+				return runBrowserAction(t, cmd, "network-"+subcommand.name, nil, jsonOutput)
 			},
 		})
 	}
@@ -515,7 +516,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 		Short: "Switch automation into a frame or back to the main document",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrowserAction(t, cmd, clock, "frame", map[string]any{"target": args[0]}, jsonOutput)
+			return runBrowserAction(t, cmd, "frame", map[string]any{"target": args[0]}, jsonOutput)
 		},
 	})
 
@@ -529,7 +530,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			if len(args) == 1 {
 				actionArgs["text"] = args[0]
 			}
-			return runBrowserAction(t, cmd, clock, "dialog", actionArgs, jsonOutput)
+			return runBrowserAction(t, cmd, "dialog", actionArgs, jsonOutput)
 		},
 	})
 	for _, operation := range []string{"dismiss", "status"} {
@@ -538,7 +539,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			Short: operation + " the current page dialog",
 			Args:  noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return runBrowserAction(t, cmd, clock, "dialog", map[string]any{"operation": operation}, jsonOutput)
+				return runBrowserAction(t, cmd, "dialog", map[string]any{"operation": operation}, jsonOutput)
 			},
 		})
 	}
@@ -550,7 +551,7 @@ func NewCommand(t Transport, clock Clock, long string) *cobra.Command {
 			Short: "Print captured browser " + action,
 			Args:  noArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return runBrowserAction(t, cmd, clock, action, nil, jsonOutput)
+				return runBrowserAction(t, cmd, action, nil, jsonOutput)
 			},
 		})
 	}
@@ -603,7 +604,7 @@ func CurrentIdentity() (string, string, error) {
 	return sessionID, capability, nil
 }
 
-func runBrowserAction(t Transport, cmd *cobra.Command, clock Clock, action string, args map[string]any, jsonOutput bool) error {
+func runBrowserAction(t Transport, cmd *cobra.Command, action string, args map[string]any, jsonOutput bool) error {
 	resp, err := t.BrowserAction(cmd.Context(), action, args)
 	if err != nil {
 		return err

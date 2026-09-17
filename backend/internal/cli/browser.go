@@ -21,7 +21,6 @@ const browserCapabilityHeader = browsercontract.CapabilityHeader
 type (
 	browserCommandRequestDTO    = clibrowser.CommandRequest
 	browserCommandResponseDTO   = clibrowser.Response
-	browserStatusDTO            = clibrowser.Status
 	browserScreenshotFileResult = clibrowser.ScreenshotFileResult
 )
 
