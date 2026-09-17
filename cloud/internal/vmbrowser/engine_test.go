@@ -196,12 +196,15 @@ func TestEngineExecuteEnvContract(t *testing.T) {
 		}
 	}
 	for _, key := range []string{"AGENT_BROWSER_SESSION", "AGENT_BROWSER_NAMESPACE"} {
-		if got := envValue(env, key); !strings.HasPrefix(got, "sess-1-") || len(got) < len("sess-1-")+12 {
-			t.Errorf("env %s = %q, want session-derived namespace with random suffix", key, got)
+		got := envValue(env, key)
+		// Namespace is a short hash form ("s-" + 12 hex + "-" + 12 hex) so
+		// agent-browser's 103-byte socket path limit holds for UUID ids.
+		if !strings.HasPrefix(got, "s-") || len(got) != 2+12+1+12 {
+			t.Errorf("env %s = %q, want short hash namespace", key, got)
 		}
 	}
-	if got := envValue(env, "AGENT_BROWSER_SOCKET_DIR"); got != filepath.Join(root, "s") {
-		t.Errorf("AGENT_BROWSER_SOCKET_DIR = %q, want %q", got, filepath.Join(root, "s"))
+	if got := envValue(env, "AGENT_BROWSER_SOCKET_DIR"); !strings.HasPrefix(got, "/tmp/abr-") {
+		t.Errorf("AGENT_BROWSER_SOCKET_DIR = %q, want short /tmp prefix", got)
 	}
 	if got := envValue(env, "AGENT_BROWSER_CONFIG"); !strings.HasSuffix(got, "config.json") {
 		t.Errorf("AGENT_BROWSER_CONFIG = %q, want config.json path", got)
@@ -299,8 +302,17 @@ func TestParseAgentBrowserJSONNonObjectDataBecomesValue(t *testing.T) {
 	}
 }
 
-func TestEngineNamespaceSanitizesSessionID(t *testing.T) {
-	if got := engineNamespace("ProjA/Foo_Bar"); !strings.HasPrefix(got, "proja-foo-bar-") {
-		t.Fatalf("engineNamespace = %q", got)
+func TestEngineNamespaceStaysShortForUUIDSessionIDs(t *testing.T) {
+	long := "01a0a443-d0e1-7220-9a1d-e0707d350af1"
+	got := engineNamespace(long)
+	if len(got) != 2+12+1+12 {
+		t.Fatalf("engineNamespace(UUID) = %q (%d chars), want short hash form", got, len(got))
+	}
+	if engineNamespace(long) == got {
+		t.Fatal("engineNamespace must include a random suffix per engine")
+	}
+	socketPathLen := len("/tmp/abr-xxxxx") + len("/namespaces/") + len(got) + len("/run/") + len(got) + len(".sock")
+	if socketPathLen > 103 {
+		t.Fatalf("derived socket path would be %d bytes (max 103)", socketPathLen)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,7 +18,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 )
 
 const (
@@ -55,12 +55,18 @@ type Engine struct {
 	// engine's lifetime, unique per engine (mirrors the Electron per-session
 	// runtime with its random suffix).
 	namespace string
+	// socketDir holds the engine's short-lived agent-browser daemon sockets.
+	// It must stay SHORT: agent-browser enforces a 103-byte unix socket path
+	// limit, and a path derived from the full session id (a UUID in the VM)
+	// overflows it. A short /tmp prefix mirrors the Electron runtime's
+	// socket-dir aliasing for the same reason.
+	socketDir string
 }
 
 // NewEngine creates the engine. runner == nil uses the exec-based runner.
 func NewEngine(chromium *Chromium, runner Runner, opts EngineOptions) *Engine {
 	if runner == nil {
-		runner = execRunner{timeout: opts.CommandTimeout}
+		runner = execRunner{binary: opts.BinaryPath, timeout: opts.CommandTimeout}
 	}
 	if opts.CommandTimeout <= 0 {
 		opts.CommandTimeout = defaultCommandTimeout
@@ -76,24 +82,33 @@ func NewEngine(chromium *Chromium, runner Runner, opts EngineOptions) *Engine {
 	}
 }
 
-// engineNamespace derives the agent-browser namespace from the session id,
-// matching the Electron runtime's sessionNamespace sanitization plus a random
-// suffix so a relaunched worker never reuses a stale namespace's state.
+// engineNamespace derives a SHORT agent-browser namespace from the session id.
+// agent-browser builds "<socketDir>/namespaces/<ns>/run/<ns>.sock" and rejects
+// paths over 103 bytes, so the session id is hashed instead of embedded (UUID
+// session ids in the VM would overflow); the random suffix keeps engines
+// unique, mirroring the Electron runtime's per-session random suffix.
 func engineNamespace(sessionID string) string {
-	var b strings.Builder
-	for _, r := range sessionID {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(unicode.ToLower(r))
-		default:
-			b.WriteByte('-')
-		}
-	}
+	digest := sha256.Sum256([]byte(sessionID))
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
-		return b.String()
+		return "s-" + hex.EncodeToString(digest[:6])
 	}
-	return b.String() + "-" + hex.EncodeToString(suffix)
+	return "s-" + hex.EncodeToString(digest[:6]) + "-" + hex.EncodeToString(suffix)
+}
+
+// ensureSocketDir lazily creates the engine's short socket dir under /tmp. The
+// dir must stay SHORT for the same 103-byte socket path limit; deriving it
+// from the session root would overflow with UUID session ids.
+func (e *Engine) ensureSocketDir() (string, error) {
+	if e.socketDir != "" {
+		return e.socketDir, nil
+	}
+	dir, err := os.MkdirTemp("", "abr-")
+	if err != nil {
+		return "", fmt.Errorf("create agent-browser socket dir: %w", err)
+	}
+	e.socketDir = dir
+	return dir, nil
 }
 
 // nativeEnvAllowlist mirrors NATIVE_ENV_ALLOWLIST (lowercase keys). The binary
@@ -106,11 +121,12 @@ var nativeEnvAllowlist = map[string]struct{}{
 
 func (e *Engine) environment(endpoint Endpoint) ([]string, error) {
 	runDir := filepath.Join(e.opts.Root, "run")
-	socketDir := filepath.Join(e.opts.Root, "s")
-	for _, dir := range []string{runDir, socketDir} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, fmt.Errorf("prepare agent-browser runtime dir: %w", err)
-		}
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return nil, fmt.Errorf("prepare agent-browser runtime dir: %w", err)
+	}
+	socketDir, err := e.ensureSocketDir()
+	if err != nil {
+		return nil, err
 	}
 	configPath := filepath.Join(runDir, "config.json")
 	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil && !errors.Is(err, os.ErrExist) {
@@ -345,6 +361,7 @@ func commandFailure(raw json.RawMessage) (string, string) {
 }
 
 type execRunner struct {
+	binary  string
 	timeout time.Duration
 }
 
@@ -354,7 +371,9 @@ func (r execRunner) Run(ctx context.Context, env []string, args ...string) (stri
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	// args is the agent-browser argv (subcommand first); the binary path is
+	// supplied here, exactly like the Electron runtime's process runner.
+	cmd := exec.CommandContext(ctx, r.binary, args...)
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{buffer: &stdout, limit: maxOutputBytes}
