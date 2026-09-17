@@ -83,3 +83,40 @@ Replayed in the exact worker base image (node:22-bookworm-slim + Debian
 
 One Dockerfile bug was caught and fixed by this verification: `install`
 does not create `/usr/local/lib/ao`, so the layer now `mkdir -p`s it.
+
+## CreateOS sandbox battery (2026-09-17, live VM, sb-01m2qq0syyx25dfbjmfnst5sca)
+
+Everything ran inside the sandbox VM (Ubuntu 24.04, 1 vCPU / 2 GiB, root);
+the workstation only cross-compiled two binaries (the real `ao` CLI and a
+browserd harness embedding the production vmbrowser service/engine/
+supervisor) and pushed them with `createos sandbox push`. Chrome 153
+installed in-VM via google-chrome-stable .deb; agent-browser 0.33.1
+sha-pinned. The ingress URL was not used; browserd binds loopback only.
+
+Results (verbatim in `/root/battery.out` inside the sandbox):
+
+- `ao browser status` -> connected (vm-chromium)
+- `ao browser open https://example.com` -> URL inside untrusted markers
+- `ao browser snapshot --interactive` -> refs e1/e2, desktop-identical shape
+- `ao browser act "the More information... link"` -> matched the (renamed)
+  "Learn more" link via fuzzy matching and navigated: tabs/get url then show
+  iana.org, proving the click executed on the real page
+- `ao browser screenshot /tmp/shot2.png --json` -> compact metadata
+  {size 16601, 780x437}; real PNG; refuses overwrite
+- `ao browser tabs`, `get url`, `console` -> desktop-shaped output
+- `ao browser open localhost:3000` + `act "the Local button"` against an
+  in-VM python dev server -> THE VM-local-dev-server case works end to end
+- resilience: `pkill` chromium -> next `open` lazily restarted it
+- `ao browser network start` -> `BROWSER_ACTION_UNSUPPORTED_CLOUD` envelope
+  with request id, exit 1; unset capability -> exit 2
+- memory: chrome PSS ~465 MB with a loaded page on the 2 GiB shape,
+  1.5 GiB still available
+
+Two production bugs were caught by this live loop before it (both fixed in
+61af6f68f): execRunner executed argv[0] as the binary (ImageMagick's
+`stream` answered), and the namespace/socket-dir derivation overflowed
+agent-browser's 103-byte unix socket path limit for UUID session ids.
+
+Not covered by this run: the ao-worker bootstrap path (startBrowserd glue is
+unit-tested; full compose e2e still pending the backend pin bump) and the
+30-minute idle shutdown (unit-tested at 50 ms).
