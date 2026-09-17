@@ -49,6 +49,12 @@ type ProjectConfig struct {
 	// Worker and Orchestrator are role-specific harness/agent-config overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
+	// Profiles are named bundles of harness, agent config, standing rules and
+	// environment that a role override or a single spawn can name instead of
+	// repeating them (`ao spawn --profile NAME`). A profile is resolved at spawn
+	// and folded into the role override; the session remembers its name so a
+	// restore reapplies the same bundle.
+	Profiles map[string]RoleProfile `json:"profiles,omitempty"`
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
@@ -119,9 +125,99 @@ func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarne
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.
+// Profile names a ProjectConfig.Profiles entry whose settings fold into this
+// override at spawn; the profile's set fields win over the inline ones.
 type RoleOverride struct {
 	Harness     AgentHarness `json:"agent,omitempty"`
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
+	Profile     string       `json:"profile,omitempty"`
+}
+
+// RoleProfile is one named bundle in ProjectConfig.Profiles.
+type RoleProfile struct {
+	Harness     AgentHarness `json:"agent,omitempty"`
+	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
+	// RulesFile is a repo-relative Markdown/text file appended to the session's
+	// standing rules after the project's own, so the role's instructions are
+	// the most specific text the agent reads.
+	RulesFile string `json:"rulesFile,omitempty"`
+	// Env are extra environment variables for sessions on this profile; a key
+	// set here wins over the project's Env, and AO-internal vars still win over both.
+	Env map[string]string `json:"env,omitempty"`
+}
+
+// ResolveProfileName picks the profile a spawn of the given kind uses: the
+// explicit name when the caller passed one, else the role override's.
+func (c ProjectConfig) ResolveProfileName(kind SessionKind, explicit string) string {
+	if name := strings.TrimSpace(explicit); name != "" {
+		return name
+	}
+	if kind == KindOrchestrator {
+		return strings.TrimSpace(c.Orchestrator.Profile)
+	}
+	return strings.TrimSpace(c.Worker.Profile)
+}
+
+// WithProfile folds the named profile into the config for one session role:
+// the role override takes the profile's harness and agent-config fields (the
+// profile's set fields win, unset fields keep the override's), Env takes the
+// profile's keys, and the profile's RulesFile is exposed for prompt assembly.
+// An empty name returns c unchanged; an unknown name is an error so a spawn
+// fails before any durable state exists.
+func (c ProjectConfig) WithProfile(kind SessionKind, name string) (ProjectConfig, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return c, nil
+	}
+	profile, ok := c.Profiles[name]
+	if !ok {
+		return c, fmt.Errorf("profile %q is not defined in the project config", name)
+	}
+	role := c.Worker
+	if kind == KindOrchestrator {
+		role = c.Orchestrator
+	}
+	if profile.Harness != "" {
+		role.Harness = profile.Harness
+	}
+	if profile.AgentConfig.Model != "" {
+		role.AgentConfig.Model = profile.AgentConfig.Model
+	}
+	if profile.AgentConfig.Effort != "" {
+		role.AgentConfig.Effort = profile.AgentConfig.Effort
+	}
+	if profile.AgentConfig.Mode != "" {
+		role.AgentConfig.Mode = profile.AgentConfig.Mode
+	}
+	if profile.AgentConfig.Permissions != "" {
+		role.AgentConfig.Permissions = profile.AgentConfig.Permissions
+	}
+	role.Profile = name
+	if kind == KindOrchestrator {
+		c.Orchestrator = role
+	} else {
+		c.Worker = role
+	}
+	if len(profile.Env) > 0 {
+		env := make(map[string]string, len(c.Env)+len(profile.Env))
+		for k, v := range c.Env {
+			env[k] = v
+		}
+		for k, v := range profile.Env {
+			env[k] = v
+		}
+		c.Env = env
+	}
+	return c, nil
+}
+
+// ProfileRulesFile returns the named profile's rules file, or "" when the name
+// is empty or unknown (WithProfile has already refused unknown names at spawn).
+func (c ProjectConfig) ProfileRulesFile(name string) string {
+	if profile, ok := c.Profiles[strings.TrimSpace(name)]; ok {
+		return strings.TrimSpace(profile.RulesFile)
+	}
+	return ""
 }
 
 const (
@@ -190,6 +286,28 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
+		}
+		if name := strings.TrimSpace(ro.Profile); name != "" {
+			if _, ok := c.Profiles[name]; !ok {
+				return fmt.Errorf("%s.profile: unknown profile %q", role, name)
+			}
+		}
+	}
+	for name, profile := range c.Profiles {
+		if err := validateNameComponent("profiles."+name, name); err != nil {
+			return err
+		}
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
+			return fmt.Errorf("profiles: name %q must be non-empty without surrounding whitespace", name)
+		}
+		if profile.Harness != "" && !profile.Harness.IsKnown() {
+			return fmt.Errorf("profiles.%s.agent: unknown harness %q", name, profile.Harness)
+		}
+		if err := profile.AgentConfig.Validate(); err != nil {
+			return fmt.Errorf("profiles.%s.%w", name, err)
+		}
+		if err := validateRepoRelative(profile.RulesFile); err != nil {
+			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
 		}
 	}
 	for _, s := range c.Symlinks {

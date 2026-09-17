@@ -84,6 +84,15 @@ type agentConfig struct {
 type roleOverride struct {
 	Agent       string      `json:"agent,omitempty"`
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
+	Profile     string      `json:"profile,omitempty"`
+}
+
+// roleProfile mirrors domain.RoleProfile.
+type roleProfile struct {
+	Agent       string            `json:"agent,omitempty"`
+	AgentConfig agentConfig       `json:"agentConfig,omitempty"`
+	RulesFile   string            `json:"rulesFile,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
@@ -108,22 +117,23 @@ type containerReapConfig struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	ContainerReap     *containerReapConfig `json:"containerReap,omitempty"`
-	CanonicalRepoURL  string               `json:"canonicalRepoURL,omitempty"`
-	DefaultBranch     string               `json:"defaultBranch,omitempty"`
-	SessionPrefix     string               `json:"sessionPrefix,omitempty"`
-	Env               map[string]string    `json:"env,omitempty"`
-	Symlinks          []string             `json:"symlinks,omitempty"`
-	PostCreate        []string             `json:"postCreate,omitempty"`
-	AgentRules        string               `json:"agentRules,omitempty"`
-	AgentRulesFile    string               `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string               `json:"orchestratorRules,omitempty"`
-	AgentConfig       agentConfig          `json:"agentConfig,omitempty"`
-	Worker            roleOverride         `json:"worker,omitempty"`
-	Orchestrator      roleOverride         `json:"orchestrator,omitempty"`
-	TrackerIntake     trackerIntakeConfig  `json:"trackerIntake,omitempty"`
-	AutoReview        bool                 `json:"autoReview,omitempty"`
-	Reviewers         []reviewerConfig     `json:"reviewers,omitempty"`
+	ContainerReap     *containerReapConfig   `json:"containerReap,omitempty"`
+	CanonicalRepoURL  string                 `json:"canonicalRepoURL,omitempty"`
+	DefaultBranch     string                 `json:"defaultBranch,omitempty"`
+	SessionPrefix     string                 `json:"sessionPrefix,omitempty"`
+	Env               map[string]string      `json:"env,omitempty"`
+	Symlinks          []string               `json:"symlinks,omitempty"`
+	PostCreate        []string               `json:"postCreate,omitempty"`
+	AgentRules        string                 `json:"agentRules,omitempty"`
+	AgentRulesFile    string                 `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string                 `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig            `json:"agentConfig,omitempty"`
+	Worker            roleOverride           `json:"worker,omitempty"`
+	Orchestrator      roleOverride           `json:"orchestrator,omitempty"`
+	Profiles          map[string]roleProfile `json:"profiles,omitempty"`
+	TrackerIntake     trackerIntakeConfig    `json:"trackerIntake,omitempty"`
+	AutoReview        bool                   `json:"autoReview,omitempty"`
+	Reviewers         []reviewerConfig       `json:"reviewers,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -133,26 +143,28 @@ type setConfigRequest struct {
 }
 
 type projectSetConfigOptions struct {
-	canonicalRepoURL  string
-	defaultBranch     string
-	sessionPrefix     string
-	model             string
-	permission        string
-	workerAgent       string
-	orchestratorAgent string
-	agentRules        string
-	agentRulesFile    string
-	orchestratorRules string
-	env               []string
-	symlink           []string
-	postCreate        []string
-	trackerIntake     bool
-	trackerRepo       string
-	trackerAssignee   string
-	reviewers         []string
-	configJSON        string
-	clear             bool
-	json              bool
+	canonicalRepoURL    string
+	defaultBranch       string
+	sessionPrefix       string
+	model               string
+	permission          string
+	workerProfile       string
+	orchestratorProfile string
+	workerAgent         string
+	orchestratorAgent   string
+	agentRules          string
+	agentRulesFile      string
+	orchestratorRules   string
+	env                 []string
+	symlink             []string
+	postCreate          []string
+	trackerIntake       bool
+	trackerRepo         string
+	trackerAssignee     string
+	reviewers           []string
+	configJSON          string
+	clear               bool
+	json                bool
 }
 
 type projectListResult struct {
@@ -294,7 +306,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, rules, agent model/permissions, role overrides, tracker intake, reviewers). The config " +
+			"symlinks, post-create, rules, agent model/permissions, role overrides, role profiles, tracker intake, reviewers). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",
@@ -333,6 +345,8 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringVar(&opts.workerProfile, "worker-profile", "", "Role profile (a profiles entry) folded into worker sessions; define profiles with --config-json")
+	f.StringVar(&opts.orchestratorProfile, "orchestrator-profile", "", "Role profile (a profiles entry) folded into orchestrator sessions; define profiles with --config-json")
 	f.StringVar(&opts.agentRules, "agent-rules", "", "Project-specific standing instructions for worker sessions")
 	f.StringVar(&opts.agentRulesFile, "agent-rules-file", "", "Repo-relative file containing worker standing instructions")
 	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
@@ -380,8 +394,8 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		AgentRulesFile:    opts.agentRulesFile,
 		OrchestratorRules: opts.orchestratorRules,
 		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission},
-		Worker:            roleOverride{Agent: opts.workerAgent},
-		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
+		Worker:            roleOverride{Agent: opts.workerAgent, Profile: opts.workerProfile},
+		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent, Profile: opts.orchestratorProfile},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
 			Repo:     opts.trackerRepo,

@@ -72,6 +72,9 @@ func (o ConversationCheckpointOrigin) Valid() bool {
 type SessionMetadata struct {
 	// Permissions pins the resolved launch policy independently of future project defaults.
 	Permissions PermissionMode `json:"permissions,omitempty"`
+	// Profile is the project role profile this session was spawned with, so a
+	// restore folds the same harness, agent config, environment and rules back in.
+	Profile string `json:"profile,omitempty"`
 
 	Branch            string `json:"branch,omitempty"`
 	WorkspacePath     string `json:"workspacePath,omitempty"`

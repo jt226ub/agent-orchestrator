@@ -268,7 +268,7 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 		}
 	}
 
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: project: %w", id, err)
 	}
@@ -1342,7 +1342,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
 		}
 	}
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("system prompt: %w", err)
 	}
@@ -3388,7 +3388,7 @@ func (m *Manager) cleanupRecoveredTargetWorkspace(ctx context.Context, rec domai
 	if strings.TrimSpace(rec.Metadata.WorkspacePath) == "" {
 		return nil
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return fmt.Errorf("agent switch recovery: load project for target workspace cleanup: %w", err)
 	}
@@ -3584,7 +3584,7 @@ func (m *Manager) failRecoveredSwitchWithSourceRollback(
 ) (bool, error) {
 	mode := domain.NormalizeSessionMode(rec.Mode)
 	recorder := newAgentSwitchFlightRecorder(sw, mode, execution)
-	project, projectErr := m.loadProject(ctx, rec.ProjectID)
+	project, projectErr := m.loadSessionProject(ctx, rec)
 	if projectErr != nil {
 		m.logger.Error("agent switch recovery: source project unavailable for rollback", "sessionID", rec.ID, "switchID", sw.ID, "error", projectErr)
 		markerCtx, cancel := switchDurableContext(ctx)

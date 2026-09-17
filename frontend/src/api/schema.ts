@@ -3698,6 +3698,9 @@ export interface components {
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
             postCreate?: string[];
+            profiles?: {
+                [key: string]: components["schemas"]["RoleProfile"];
+            };
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];
@@ -3850,6 +3853,15 @@ export interface components {
         RoleOverride: {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
+            profile?: string;
+        };
+        RoleProfile: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AgentConfig"];
+            env?: {
+                [key: string]: string;
+            };
+            rulesFile?: string;
         };
         RollbackConversationResponse: {
             turnsDiscarded: number;
@@ -4195,6 +4207,7 @@ export interface components {
             mode?: "chat" | "tui";
             model?: string;
             parentSessionId?: string;
+            profile?: string;
             projectId?: string;
             prompt?: string;
             /** @enum {string} */

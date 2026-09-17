@@ -958,23 +958,23 @@ func TestResolveSpawnHarness_OrchestratorDefault(t *testing.T) {
 			Orchestrator: roleOverride{Agent: "claude-code"},
 		},
 	}
-	if got, err := resolveSpawnHarness("", "orchestrator", project); err != nil || got != "claude-code" {
+	if got, err := resolveSpawnHarness("", "orchestrator", "", project); err != nil || got != "claude-code" {
 		t.Fatalf("orchestrator default: got %q err %v, want claude-code", got, err)
 	}
-	if got, err := resolveSpawnHarness("", "worker", project); err != nil || got != "codex" {
+	if got, err := resolveSpawnHarness("", "worker", "", project); err != nil || got != "codex" {
 		t.Fatalf("worker default: got %q err %v, want codex", got, err)
 	}
-	if got, err := resolveSpawnHarness("aider", "orchestrator", project); err != nil || got != "aider" {
+	if got, err := resolveSpawnHarness("aider", "orchestrator", "", project); err != nil || got != "aider" {
 		t.Fatalf("explicit agent: got %q err %v, want aider", got, err)
 	}
 	// Unset kind is the default `ao spawn` path and must resolve to worker.agent.
-	if got, err := resolveSpawnHarness("", "", project); err != nil || got != "codex" {
+	if got, err := resolveSpawnHarness("", "", "", project); err != nil || got != "codex" {
 		t.Fatalf("unset kind: got %q err %v, want codex", got, err)
 	}
 	// Orchestrator spawn with no orchestrator.agent configured surfaces the
 	// --orchestrator-agent hint (the error branch this PR adds).
 	noOrch := projectDetails{ID: "demo", Config: &projectConfig{Worker: roleOverride{Agent: "codex"}}}
-	if _, err := resolveSpawnHarness("", "orchestrator", noOrch); err == nil || !strings.Contains(err.Error(), "--orchestrator-agent") {
+	if _, err := resolveSpawnHarness("", "orchestrator", "", noOrch); err == nil || !strings.Contains(err.Error(), "--orchestrator-agent") {
 		t.Fatalf("missing orchestrator agent: err=%v, want --orchestrator-agent hint", err)
 	}
 }
@@ -1009,5 +1009,34 @@ func TestSpawnModelFlagWiring(t *testing.T) {
 	}
 	if req.Model != "gpt-5.6-sol" {
 		t.Fatalf("spawn request model = %q, want gpt-5.6-sol", req.Model)
+	}
+}
+
+// TestResolveSpawnHarness_Profile asserts a role profile names the harness: an
+// explicit --profile first, then the role override's profile, and an undefined
+// profile is a usage error before any daemon call.
+func TestResolveSpawnHarness_Profile(t *testing.T) {
+	project := projectDetails{
+		ID: "demo",
+		Config: &projectConfig{
+			Worker:   roleOverride{Agent: "codex", Profile: "flash-coder"},
+			Profiles: map[string]roleProfile{"flash-coder": {Agent: "agy"}, "pro-expert": {Agent: "agy", AgentConfig: agentConfig{Model: "gemini-3.1-pro-high"}}, "inherit": {}},
+		},
+	}
+	if got, err := resolveSpawnHarness("", "worker", "", project); err != nil || got != "agy" {
+		t.Fatalf("role profile: got %q err %v, want agy", got, err)
+	}
+	if got, err := resolveSpawnHarness("", "worker", "pro-expert", project); err != nil || got != "agy" {
+		t.Fatalf("explicit profile: got %q err %v, want agy", got, err)
+	}
+	if got, err := resolveSpawnHarness("aider", "worker", "pro-expert", project); err != nil || got != "aider" {
+		t.Fatalf("explicit agent beats profile: got %q err %v, want aider", got, err)
+	}
+	// A profile without a harness falls through to the role override's agent.
+	if got, err := resolveSpawnHarness("", "worker", "inherit", project); err != nil || got != "codex" {
+		t.Fatalf("harnessless profile: got %q err %v, want codex", got, err)
+	}
+	if _, err := resolveSpawnHarness("", "worker", "missing", project); err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("undefined profile: err=%v exit=%d, want usage error naming the profile", err, ExitCode(err))
 	}
 }

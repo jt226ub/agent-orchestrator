@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestProjectConfigValidate(t *testing.T) {
 	tests := []struct {
@@ -18,6 +21,14 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"session prefix with backslash", ProjectConfig{SessionPrefix: `ao\project`}, true},
 		{"session prefix traversal component", ProjectConfig{SessionPrefix: ".."}, true},
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
+		{"good profile", ProjectConfig{Profiles: map[string]RoleProfile{"flash-coder": {Harness: HarnessAgy, AgentConfig: AgentConfig{Model: "gemini-3.8-flash-high", Permissions: PermissionModeBypassPermissions}, RulesFile: "rules/flash-coder.md", Env: map[string]string{"X": "1"}}}}, false},
+		{"role names a defined profile", ProjectConfig{Worker: RoleOverride{Profile: "p"}, Profiles: map[string]RoleProfile{"p": {Harness: HarnessCodex}}}, false},
+		{"role names an undefined profile", ProjectConfig{Worker: RoleOverride{Profile: "missing"}}, true},
+		{"profile unknown harness", ProjectConfig{Profiles: map[string]RoleProfile{"p": {Harness: "nope"}}}, true},
+		{"profile bad agent config", ProjectConfig{Profiles: map[string]RoleProfile{"p": {AgentConfig: AgentConfig{Permissions: "yolo"}}}}, true},
+		{"profile rules file escapes", ProjectConfig{Profiles: map[string]RoleProfile{"p": {RulesFile: "../rules.md"}}}, true},
+		{"profile name with slash", ProjectConfig{Profiles: map[string]RoleProfile{"a/b": {Harness: HarnessCodex}}}, true},
+		{"profile name with whitespace", ProjectConfig{Profiles: map[string]RoleProfile{" p": {Harness: HarnessCodex}}}, true},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
 		{"good symlinks", ProjectConfig{Symlinks: []string{".env", "configs/dev.toml"}}, false},
@@ -212,5 +223,63 @@ func TestProjectConfigIsZero(t *testing.T) {
 	}
 	if (ProjectConfig{AutoReview: true}).IsZero() {
 		t.Fatal("config with autoReview enabled should not be zero")
+	}
+}
+
+func TestProjectConfigWithProfile(t *testing.T) {
+	cfg := ProjectConfig{
+		Env:    map[string]string{"KEEP": "project", "SHARED": "project"},
+		Worker: RoleOverride{Harness: HarnessCodex, AgentConfig: AgentConfig{Model: "slot-model", Mode: "low", Permissions: PermissionModeAuto}, Profile: "default-profile"},
+		Profiles: map[string]RoleProfile{
+			"default-profile": {Harness: HarnessAgy, AgentConfig: AgentConfig{Model: "gemini-3.8-flash-high"}, RulesFile: "rules/flash.md", Env: map[string]string{"SHARED": "profile", "ONLY": "profile"}},
+			"pro-expert":      {AgentConfig: AgentConfig{Model: "gemini-3.1-pro-high", Permissions: PermissionModeBypassPermissions}},
+		},
+	}
+	// The role override's profile is the default; an explicit name wins.
+	if got := cfg.ResolveProfileName(KindWorker, ""); got != "default-profile" {
+		t.Fatalf("resolved = %q, want the worker override's profile", got)
+	}
+	if got := cfg.ResolveProfileName(KindWorker, " pro-expert "); got != "pro-expert" {
+		t.Fatalf("resolved = %q, want the explicit profile", got)
+	}
+	if got := cfg.ResolveProfileName(KindOrchestrator, ""); got != "" {
+		t.Fatalf("orchestrator resolved = %q, want none", got)
+	}
+	// Folding: the profile's set fields win over the override, unset fields keep it;
+	// env merges with the profile's keys winning; the original config is untouched.
+	folded, err := cfg.WithProfile(KindWorker, "default-profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folded.Worker.Harness != HarnessAgy || folded.Worker.AgentConfig.Model != "gemini-3.8-flash-high" || folded.Worker.AgentConfig.Mode != "low" || folded.Worker.AgentConfig.Permissions != PermissionModeAuto || folded.Worker.Profile != "default-profile" {
+		t.Fatalf("folded worker = %#v", folded.Worker)
+	}
+	if folded.Env["KEEP"] != "project" || folded.Env["SHARED"] != "profile" || folded.Env["ONLY"] != "profile" {
+		t.Fatalf("folded env = %#v", folded.Env)
+	}
+	if cfg.Env["SHARED"] != "project" || cfg.Worker.Harness != HarnessCodex {
+		t.Fatalf("WithProfile mutated the receiver: %#v", cfg)
+	}
+	if folded.ProfileRulesFile("default-profile") != "rules/flash.md" || folded.ProfileRulesFile("nope") != "" {
+		t.Fatalf("ProfileRulesFile = %q / %q", folded.ProfileRulesFile("default-profile"), folded.ProfileRulesFile("nope"))
+	}
+	// A profile without a harness keeps the override's; its permissions still apply.
+	pro, err := cfg.WithProfile(KindWorker, "pro-expert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pro.Worker.Harness != HarnessCodex || pro.Worker.AgentConfig.Model != "gemini-3.1-pro-high" || pro.Worker.AgentConfig.Permissions != PermissionModeBypassPermissions {
+		t.Fatalf("pro worker = %#v", pro.Worker)
+	}
+	// The orchestrator slot is untouched by a worker fold, and vice versa.
+	if pro.Orchestrator != (RoleOverride{}) {
+		t.Fatalf("orchestrator changed: %#v", pro.Orchestrator)
+	}
+	// An empty name is a no-op; an unknown name is an error.
+	if same, err := cfg.WithProfile(KindWorker, ""); err != nil || !reflect.DeepEqual(same, cfg) {
+		t.Fatalf("empty name: %#v %v", same, err)
+	}
+	if _, err := cfg.WithProfile(KindWorker, "missing"); err == nil {
+		t.Fatal("unknown profile must be refused")
 	}
 }

@@ -451,3 +451,22 @@ func TestProjectRemove_YesSkipsConfirmationAndSupportsBackendRemoveEnvelope(t *t
 		t.Fatalf("--yes output should skip prompt and print removal:\n%s", out)
 	}
 }
+
+func TestBuildProjectConfigProfileFlags(t *testing.T) {
+	got, err := buildProjectConfig(projectSetConfigOptions{workerProfile: "flash-coder", orchestratorProfile: "orchestrator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Worker.Profile != "flash-coder" || got.Orchestrator.Profile != "orchestrator" {
+		t.Fatalf("role profiles = %#v / %#v", got.Worker, got.Orchestrator)
+	}
+	// Profiles themselves travel through --config-json and survive the CLI mirror.
+	got, err = buildProjectConfig(projectSetConfigOptions{configJSON: `{"worker":{"profile":"flash-coder"},"profiles":{"flash-coder":{"agent":"agy","agentConfig":{"model":"gemini-3.8-flash-high","permissions":"bypass-permissions"},"rulesFile":"rules/flash-coder.md","env":{"AO_PROFILE_HINT":"flash"}}}}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, ok := got.Profiles["flash-coder"]
+	if !ok || profile.Agent != "agy" || profile.AgentConfig.Model != "gemini-3.8-flash-high" || profile.AgentConfig.Permissions != "bypass-permissions" || profile.RulesFile != "rules/flash-coder.md" || profile.Env["AO_PROFILE_HINT"] != "flash" || got.Worker.Profile != "flash-coder" {
+		t.Fatalf("config-json profiles = %#v worker=%#v", got.Profiles, got.Worker)
+	}
+}

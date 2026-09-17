@@ -24,6 +24,7 @@ type spawnOptions struct {
 	standalone      bool
 	harness         string
 	kind            string
+	profile         string
 	mode            string
 	branch          string
 	prompt          string
@@ -46,6 +47,7 @@ type spawnRequest struct {
 	Kind            string `json:"kind,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	Harness         string `json:"harness,omitempty"`
+	Profile         string `json:"profile,omitempty"`
 	Branch          string `json:"branch,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	Model           string `json:"model,omitempty"`
@@ -126,7 +128,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				opts.project = project.ID
 			}
 
-			harness, err := resolveSpawnHarness(opts.harness, opts.kind, project)
+			harness, err := resolveSpawnHarness(opts.harness, opts.kind, opts.profile, project)
 			if err != nil {
 				return err
 			}
@@ -160,6 +162,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				TrackerProvider: opts.trackerProvider,
 				Kind:            opts.kind,
 				Harness:         opts.harness,
+				Profile:         strings.TrimSpace(opts.profile),
 				Mode:            opts.mode,
 				Branch:          opts.branch,
 				Prompt:          opts.prompt,
@@ -216,6 +219,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.BoolVar(&opts.standalone, "standalone", false, "Spawn a projectless worker in an AO-managed plain directory (requires --agent)")
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, kimchi, prime-agent, autohand (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
+	f.StringVar(&opts.profile, "profile", "", "Role profile from the project's profiles map: its harness, agent config, environment and rules file apply to this session; --agent and --model still override it")
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for standalone or Scratch sessions)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
@@ -360,11 +364,31 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func resolveSpawnHarness(explicit, kind string, project projectDetails) (string, error) {
+func resolveSpawnHarness(explicit, kind, profile string, project projectDetails) (string, error) {
 	if harness := strings.TrimSpace(explicit); harness != "" {
 		return harness, nil
 	}
 	if project.Config != nil {
+		// A role profile — the explicit one, else the role override's — names the
+		// harness before the role override's own agent does; the daemon folds the
+		// same profile into the spawn.
+		name := strings.TrimSpace(profile)
+		if name == "" {
+			if kind == "orchestrator" {
+				name = strings.TrimSpace(project.Config.Orchestrator.Profile)
+			} else {
+				name = strings.TrimSpace(project.Config.Worker.Profile)
+			}
+		}
+		if name != "" {
+			entry, ok := project.Config.Profiles[name]
+			if !ok {
+				return "", usageError{fmt.Errorf("profile %q is not defined in project %s; define it with `ao project set-config %s --config-json ...`", name, project.ID, project.ID)}
+			}
+			if harness := strings.TrimSpace(entry.Agent); harness != "" {
+				return harness, nil
+			}
+		}
 		if kind == "orchestrator" {
 			if harness := strings.TrimSpace(project.Config.Orchestrator.Agent); harness != "" {
 				return harness, nil

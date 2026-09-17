@@ -156,6 +156,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			metadata := domain.SessionMetadata{
 				Permissions:       in.record.Metadata.Permissions,
+				Profile:           in.record.Metadata.Profile,
 				Branch:            in.workspace.Branch,
 				WorkspacePath:     in.workspace.Path,
 				WorkspaceRepoPath: in.workspace.RepoPath,
@@ -317,7 +318,7 @@ func (m *Manager) resumeChatController(
 
 	// Recomputed rather than persisted, matching the terminal path: a restored
 	// session keeps its standing instructions across the relaunch.
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
