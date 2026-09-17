@@ -32,8 +32,6 @@ type ServiceOptions struct {
 	Engine             EngineLike
 	Logger             *slog.Logger
 	authority          *browsercontract.Authority
-	maxIdle            time.Duration
-	now                func() time.Time
 }
 
 // Service exposes the desktop browser contract on the VM loopback:

@@ -175,29 +175,37 @@ func (e *Engine) Execute(ctx context.Context, action string, args map[string]any
 	return parseAgentBrowserJSON(raw)
 }
 
+// disableStreaming reasserts the input-surface policy before every command.
+// The native daemon can expire and be recreated between commands and its
+// replacement starts streaming by default; "already disabled" (non-zero exit
+// carrying the marker) is the desired state, any other failure is fatal.
+func (e *Engine) disableStreaming(ctx context.Context, environment []string) error {
+	stdout, stderr, exitCode, err := e.runner.Run(ctx, environment, "stream", "disable")
+	if err == nil && exitCode != 0 &&
+		!strings.Contains(stdout, streamAlreadyDisabledMessage) &&
+		!strings.Contains(stderr, streamAlreadyDisabledMessage) {
+		return &CommandError{
+			Code:    "AGENT_BROWSER_START_FAILED",
+			Message: strings.TrimSpace(stderr+" "+stdout) + " (unable to disable agent-browser streaming)",
+		}
+	}
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return &CommandError{Code: "AGENT_BROWSER_START_FAILED", Message: err.Error()}
+	}
+	return nil
+}
+
 // runJSON performs the stream-disable preamble and one JSON command.
 func (e *Engine) runJSON(ctx context.Context, argv []string) (string, error) {
 	environment, err := e.prepare(ctx)
 	if err != nil {
 		return "", err
 	}
-	// The native daemon can expire and be recreated between commands and its
-	// replacement starts streaming by default; reassert the input-surface
-	// policy before every command. "Already disabled" is the desired state.
-	stdout, stderr, exitCode, err := e.runner.Run(ctx, environment, "stream", "disable")
-	if err == nil && exitCode != 0 &&
-		!strings.Contains(stdout, streamAlreadyDisabledMessage) &&
-		!strings.Contains(stderr, streamAlreadyDisabledMessage) {
-		return "", &CommandError{
-			Code:    "AGENT_BROWSER_START_FAILED",
-			Message: strings.TrimSpace(stderr+" "+stdout) + " (unable to disable agent-browser streaming)",
-		}
-	}
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		return "", &CommandError{Code: "AGENT_BROWSER_START_FAILED", Message: err.Error()}
+	if err := e.disableStreaming(ctx, environment); err != nil {
+		return "", err
 	}
 
-	stdout, stderr, exitCode, err = e.runner.Run(ctx, environment, argv...)
+	stdout, stderr, exitCode, err := e.runner.Run(ctx, environment, argv...)
 	if err != nil {
 		return "", &CommandError{Code: "AGENT_BROWSER_COMMAND_FAILED", Message: err.Error()}
 	}
@@ -235,10 +243,10 @@ func (e *Engine) Screenshot(ctx context.Context) (data string, width, height int
 	defer func() { _ = os.RemoveAll(directory) }()
 	target := filepath.Join(directory, "screenshot.png")
 
-	// The preamble command does not need the endpoint twice but keeps parity
-	// with runJSON's policy reassertion.
-	if _, _, _, err := e.runner.Run(ctx, environment, "stream", "disable"); err != nil {
-		return "", 0, 0, &CommandError{Code: "AGENT_BROWSER_START_FAILED", Message: err.Error()}
+	// The preamble keeps parity with runJSON's policy reassertion, including
+	// the already-disabled tolerance.
+	if err := e.disableStreaming(ctx, environment); err != nil {
+		return "", 0, 0, err
 	}
 	stdout, stderr, exitCode, err := e.runner.Run(ctx, environment, "screenshot", target, "--json")
 	if err != nil {
@@ -268,12 +276,15 @@ func (e *Engine) Screenshot(ctx context.Context) (data string, width, height int
 	return base64.StdEncoding.EncodeToString(image), width, height, nil
 }
 
-// Close best-effort tears down the engine: one agent-browser close command,
-// then Chromium. Errors are logged by callers, not fatal.
+// Close best-effort tears down the engine: one agent-browser close command
+// when Chromium is running (Close must never START a browser: the idle
+// shutdown path calls it repeatedly, and restarting just to say goodbye would
+// loop forever), then Chromium itself. Errors are logged by callers.
 func (e *Engine) Close(ctx context.Context) error {
-	environment, err := e.prepare(ctx)
-	if err == nil {
-		_, _, _, _ = e.runner.Run(ctx, environment, "close")
+	if e.chromium.CurrentStatus().Running {
+		if environment, err := e.prepare(ctx); err == nil {
+			_, _, _, _ = e.runner.Run(ctx, environment, "close")
+		}
 	}
 	return e.chromium.Stop(ctx)
 }

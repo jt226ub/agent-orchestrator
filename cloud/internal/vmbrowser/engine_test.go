@@ -302,6 +302,21 @@ func TestParseAgentBrowserJSONNonObjectDataBecomesValue(t *testing.T) {
 	}
 }
 
+func TestEngineCloseNeverStartsChromium(t *testing.T) {
+	runner := &fakeRunner{}
+	engine, _ := newTestEngine(t, runner)
+	// Closing an engine whose browser never started must not spawn one:
+	// the idle-shutdown path calls Close on every idle tick, and a Close
+	// that restarted Chromium would loop relaunch-and-stop forever.
+	if err := engine.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	calls := runner.recorded()
+	if len(calls) != 0 {
+		t.Fatalf("Close ran %d commands against a never-started browser, want 0", len(calls))
+	}
+}
+
 func TestEngineNamespaceStaysShortForUUIDSessionIDs(t *testing.T) {
 	long := "01a0a443-d0e1-7220-9a1d-e0707d350af1"
 	got := engineNamespace(long)
