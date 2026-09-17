@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,17 +172,9 @@ func TestEngineExecuteStringErrorStaleDetection(t *testing.T) {
 	engine, _ := newTestEngine(t, runner)
 	_, err := engine.Execute(context.Background(), "click", map[string]any{"ref": "e3"})
 	var ce *CommandError
-	if !asCommandError(err, &ce) || ce.Code != "STALE_REFERENCE" {
+	if !errors.As(err, &ce) || ce.Code != "STALE_REFERENCE" {
 		t.Fatalf("want STALE_REFERENCE from string error, got %v", err)
 	}
-}
-
-func asCommandError(err error, target **CommandError) bool {
-	ce, ok := err.(*CommandError)
-	if ok {
-		*target = ce
-	}
-	return ok
 }
 
 func TestEngineExecuteEnvContract(t *testing.T) {
@@ -275,7 +268,7 @@ func TestEngineScreenshotRejectsOversized(t *testing.T) {
 	engine, _ := newTestEngine(t, runner)
 	_, _, _, err := engine.Screenshot(context.Background())
 	var ce *CommandError
-	if !asCommandError(err, &ce) || ce.Code != "AGENT_BROWSER_OUTPUT_TOO_LARGE" {
+	if !errors.As(err, &ce) || ce.Code != "AGENT_BROWSER_OUTPUT_TOO_LARGE" {
 		t.Fatalf("want AGENT_BROWSER_OUTPUT_TOO_LARGE, got %v", err)
 	}
 }

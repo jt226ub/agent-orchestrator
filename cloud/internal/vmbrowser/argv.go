@@ -1,6 +1,7 @@
 package vmbrowser
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -21,6 +22,11 @@ func (e *CommandError) Error() string {
 		return e.Message
 	}
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
+}
+
+// asCommandError unwraps a CommandError for code-based branching.
+func asCommandError(err error, target **CommandError) bool {
+	return errors.As(err, target)
 }
 
 func invalidArgument(message string) error {
