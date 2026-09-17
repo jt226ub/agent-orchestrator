@@ -172,7 +172,9 @@ func run(logger *slog.Logger) error {
 	// The in-VM browser service binds synchronously before any terminal opens
 	// so the agent env can never race the listener. A browserd failure must
 	// not kill the worker (same policy as a missing harness): agents lose
-	// browser verbs and everything else keeps running.
+	// browser verbs and everything else keeps running. The vars are exported
+	// into the worker env (workspace shell terminals inherit os.Environ) and
+	// injected into the coding-agent command when it is built.
 	browserdEnv, stopBrowserd, err := startBrowserd(runCtx, BrowserdOptions{
 		DataDir:   dataDir,
 		SessionID: bootstrap.SessionID,
@@ -182,12 +184,7 @@ func run(logger *slog.Logger) error {
 		logger.Warn("browserd unavailable; continuing without browser verbs", "error", err)
 	} else {
 		defer func() { _ = stopBrowserd(context.Background()) }()
-		if agentCommand.Env == nil {
-			agentCommand.Env = map[string]string{}
-		}
 		for key, value := range browserdEnv {
-			agentCommand.Env[key] = value
-			// Workspace shell terminals inherit the worker environment.
 			if err := os.Setenv(key, value); err != nil {
 				logger.Warn("export browser env failed", "key", key, "error", err)
 			}
@@ -254,6 +251,7 @@ func run(logger *slog.Logger) error {
 		if err := startInteractiveAgent(
 			runCtx, logger, client, bootstrap, workspace, dataDir,
 			pullRequestSocketPath, reviewSocketPath, &transportSupervisor,
+			browserdEnv,
 		); err != nil && runCtx.Err() == nil {
 			logger.Error("background coding-agent startup failed", "error", err)
 		}
@@ -319,6 +317,7 @@ func startInteractiveAgent(
 	bootstrap worker.BootstrapResponse,
 	workspace, dataDir, pullRequestSocketPath, reviewSocketPath string,
 	transportSupervisor *workertransport.Supervisor,
+	browserEnv map[string]string,
 ) error {
 	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
 		logger.Warn("coding-agent harness unavailable", "error", err)
@@ -349,6 +348,9 @@ func startInteractiveAgent(
 		`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
 		`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
 		"to submit an AO-triggered review verdict."
+	for key, value := range browserEnv {
+		agentCommand.Env[key] = value
+	}
 	agentTerminal, err := client.ensureAgentTerminal(ctx)
 	if err != nil {
 		agentCommand.Cleanup()
