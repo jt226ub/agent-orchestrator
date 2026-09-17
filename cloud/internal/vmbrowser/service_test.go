@@ -40,6 +40,8 @@ func (f *fakeEngine) Screenshot(context.Context) (string, int, int, error) {
 	return "cG5n", 10, 20, nil
 }
 
+func (f *fakeEngine) Close(context.Context) error { return nil }
+
 func newTestService(t *testing.T, engine EngineLike) (*Service, string) {
 	t.Helper()
 	authority := browsercontract.NewAuthority()

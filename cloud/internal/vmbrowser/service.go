@@ -21,6 +21,8 @@ import (
 type EngineLike interface {
 	Execute(ctx context.Context, action string, args map[string]any) (map[string]any, error)
 	Screenshot(ctx context.Context) (data string, width, height int, err error)
+	// Close stops the supervised browser; used by idle shutdown.
+	Close(ctx context.Context) error
 }
 
 // ServiceOptions configures the loopback browser service.
