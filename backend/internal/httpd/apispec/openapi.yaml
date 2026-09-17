@@ -351,6 +351,57 @@ paths:
       summary: Verify an installed harness without reinstalling or probing authentication
       tags:
       - agents
+  /api/v1/agents/agy/capacity:
+    get:
+      operationId: getAgyCapacity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyCapacityResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached Antigravity plan capacity snapshot
+      tags:
+      - agents
+  /api/v1/agents/agy/capacity/ensure:
+    post:
+      operationId: ensureAgyCapacity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureAgyCapacityRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyCapacityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the Antigravity CLI's plan limits when the cached snapshot is
+        stale
+      tags:
+      - agents
   /api/v1/agents/auth-plans:
     get:
       operationId: listAgentAuthPlans
@@ -7572,6 +7623,101 @@ components:
       required:
       - switch
       type: object
+    AgyCapacityBucketResponse:
+      properties:
+        displayName:
+          type:
+          - "null"
+          - string
+        primary:
+          $ref: '#/components/schemas/AgyCapacityWindowResponse'
+        secondary:
+          $ref: '#/components/schemas/AgyCapacityWindowResponse'
+      type: object
+    AgyCapacityResponse:
+      properties:
+        additionalBuckets:
+          items:
+            $ref: '#/components/schemas/AgyCapacityBucketResponse'
+          type: array
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        overall:
+          $ref: '#/components/schemas/AgyCapacityBucketResponse'
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        remainingPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - available
+          - near_limit
+          - exhausted
+          - unknown
+          - unsupported
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - state
+      - freshness
+      - reasonCode
+      - reason
+      - additionalBuckets
+      type: object
+    AgyCapacityWindowResponse:
+      properties:
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+        windowDurationMinutes:
+          type:
+          - "null"
+          - integer
+      required:
+      - usedPercent
+      type: object
     AttachmentInput:
       properties:
         data:
@@ -9440,6 +9586,11 @@ components:
           type: string
       required:
       - purpose
+      type: object
+    EnsureAgyCapacityRequest:
+      properties:
+        force:
+          type: boolean
       type: object
     EnsureCodexAccountsRequest:
       properties:

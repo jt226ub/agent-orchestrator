@@ -61,6 +61,7 @@ type Service struct {
 	modelCalls    map[string]*modelCatalogCall
 	codexAccounts *codexAccountManager
 	codexSwitches *codexAccountSwitchCoordinator
+	agyCapacity   *agyCapacityCoordinator
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
@@ -110,6 +111,12 @@ func NewWithDeps(deps Deps) *Service {
 			svc.codexAccounts.now = deps.Clock
 		}
 	}
+	if svc.agyCapacity != nil {
+		svc.agyCapacity = newAgyCapacityCoordinator(deps.Context, svc.agyCapacity.reader, deps.Logger)
+		if deps.Clock != nil {
+			svc.agyCapacity.now = deps.Clock
+		}
+	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,
 		AuthenticationCheck: svc.structuredCodexAuthentication,
@@ -142,7 +149,16 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 	for _, item := range agents {
 		resolverMu[string(item.Harness)] = &sync.Mutex{}
 	}
-	return &Service{agents: agents, readiness: newReadinessCoordinator(readinessCoordinatorConfig{Agents: agents}), cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}}
+	svc := &Service{agents: agents, readiness: newReadinessCoordinator(readinessCoordinatorConfig{Agents: agents}), cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}}
+	for _, item := range agents {
+		if item.Harness != domain.HarnessAgy {
+			continue
+		}
+		if reader, ok := item.Agent.(ports.AgyCapacityReader); ok {
+			svc.agyCapacity = newAgyCapacityCoordinator(context.Background(), reader, nil)
+		}
+	}
+	return svc
 }
 
 // WarmModelCatalogs starts a non-blocking, sequential refresh of the Claude

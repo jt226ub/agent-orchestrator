@@ -387,6 +387,10 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"ControllersShellTerminalEnvelope":                 "ShellTerminalEnvelope",
 	"ControllersOpenCodexAccountLoginTerminalResponse": "OpenCodexAccountLoginTerminalResponse",
 	"ControllersCodexAccountLoginTerminalResponse":     "CodexAccountLoginTerminalResponse",
+	"ControllersAgyCapacityResponse":                   "AgyCapacityResponse",
+	"ControllersAgyCapacityBucketResponse":             "AgyCapacityBucketResponse",
+	"ControllersAgyCapacityWindowResponse":             "AgyCapacityWindowResponse",
+	"ControllersEnsureAgyCapacityRequest":              "EnsureAgyCapacityRequest",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRRequest":          "MergePRRequest",
 	"ControllersMergePRResponse":         "MergePRResponse",
@@ -1157,6 +1161,17 @@ func agentOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/agy/capacity", id: "getAgyCapacity", tag: "agents",
+			summary: "Return the cached Antigravity plan capacity snapshot",
+			resps:   []respUnit{{http.StatusOK, controllers.AgyCapacityResponse{}}, {http.StatusNotImplemented, envelope.APIError{}}},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/agy/capacity/ensure", id: "ensureAgyCapacity", tag: "agents",
+			summary: "Read the Antigravity CLI's plan limits when the cached snapshot is stale",
+			reqBody: controllers.EnsureAgyCapacityRequest{},
+			resps:   []respUnit{{http.StatusOK, controllers.AgyCapacityResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusNotImplemented, envelope.APIError{}}},
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/agents/codex/accounts", id: "getCodexAccounts", tag: "agents",

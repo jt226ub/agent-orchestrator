@@ -1307,6 +1307,44 @@ type CodexCapacityWindowResponse struct {
 	ResetsAt              *time.Time `json:"resetsAt,omitempty"`
 }
 
+// AgyCapacityResponse is the Antigravity CLI's plan capacity: the signed-in
+// Google account's 5-hour and weekly limits per model group, as the CLI's own
+// `/usage` command reports them. Provider limit identifiers stay private.
+type AgyCapacityResponse struct {
+	State             string                      `json:"state" enum:"available,near_limit,exhausted,unknown,unsupported"`
+	Freshness         string                      `json:"freshness" enum:"fresh,stale,checking"`
+	UsedPercent       *float64                    `json:"usedPercent,omitempty" minimum:"0" maximum:"100"`
+	RemainingPercent  *float64                    `json:"remainingPercent,omitempty" minimum:"0" maximum:"100"`
+	ResetsAt          *time.Time                  `json:"resetsAt,omitempty"`
+	ObservedAt        *time.Time                  `json:"observedAt,omitempty"`
+	CheckedAt         *time.Time                  `json:"checkedAt,omitempty"`
+	AttemptedAt       *time.Time                  `json:"attemptedAt,omitempty"`
+	ReasonCode        string                      `json:"reasonCode"`
+	Reason            string                      `json:"reason"`
+	Overall           *AgyCapacityBucketResponse  `json:"overall,omitempty"`
+	AdditionalBuckets []AgyCapacityBucketResponse `json:"additionalBuckets"`
+}
+
+// AgyCapacityBucketResponse is one model group's shared limits.
+type AgyCapacityBucketResponse struct {
+	DisplayName *string                    `json:"displayName,omitempty"`
+	Primary     *AgyCapacityWindowResponse `json:"primary,omitempty"`
+	Secondary   *AgyCapacityWindowResponse `json:"secondary,omitempty"`
+}
+
+// AgyCapacityWindowResponse is one plan rate-limit window.
+type AgyCapacityWindowResponse struct {
+	UsedPercent           float64    `json:"usedPercent" minimum:"0" maximum:"100"`
+	WindowDurationMinutes *int64     `json:"windowDurationMinutes,omitempty"`
+	ResetsAt              *time.Time `json:"resetsAt,omitempty"`
+}
+
+// EnsureAgyCapacityRequest asks for a display-fresh Antigravity capacity
+// snapshot; force reads the CLI even when the cache is fresh.
+type EnsureAgyCapacityRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
 // CodexResetCreditsSummaryResponse contains no provider reset-credit identity.
 type CodexResetCreditsSummaryResponse struct {
 	AvailableCount   int64      `json:"availableCount" minimum:"0"`

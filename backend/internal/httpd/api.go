@@ -24,6 +24,7 @@ import (
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	CodexAccounts      controllers.CodexAccountService
+	AgyCapacity        controllers.AgyCapacityService
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
@@ -105,6 +106,7 @@ type API struct {
 	deps          APIDeps
 	agents        *controllers.AgentsController
 	codexAccounts *controllers.CodexAccountsController
+	agyCapacity   *controllers.AgyCapacityController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
 	desktop       *controllers.DesktopWorkspaceController
@@ -138,6 +140,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Catalog: deps.Agents,
 		},
 		codexAccounts: &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
+		agyCapacity:   &controllers.AgyCapacityController{Svc: deps.AgyCapacity},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -186,6 +189,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
 			a.codexAccounts.Register(r)
+			a.agyCapacity.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.desktop.Register(r)

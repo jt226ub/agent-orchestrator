@@ -6,6 +6,7 @@ import { BrowserDownloadsSection } from "./BrowserDownloadsSection";
 import { BrowserProfilesSection } from "./BrowserProfilesSection";
 import { CloudCredentialsSection } from "./CloudCredentialsSection";
 import { CloudProviderSection } from "./CloudProviderSection";
+import { AgyCapacitySection } from "./AgyCapacitySection";
 import { CodexAccountsSection } from "./CodexAccountsSection";
 import { ConnectMobileContent } from "./ConnectMobileContent";
 import { GeneralSettingsSection } from "./GeneralSettingsSection";
@@ -53,7 +54,14 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		id: "agents",
 		icon: BadgeCheck,
 		label: (t) => t("settings.agents"),
-		render: (_t, titleHidden) => <CodexAccountsSection titleHidden={titleHidden} />,
+		render: (_t, titleHidden) => (
+			<>
+				<CodexAccountsSection titleHidden={titleHidden} />
+				<div className="border-t border-border/60 pt-5">
+					<AgyCapacitySection />
+				</div>
+			</>
+		),
 	},
 	{
 		id: "browserProfiles",
