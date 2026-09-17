@@ -66,3 +66,20 @@ binary.
 - RSS-sum via `ps -C` undercounts process names longer than 15 chars
   (`google-chrome-st`); use `pgrep -f` + `/proc/<pid>/status` or
   `smaps_rollup` (PSS) as this note did.
+
+## Image-level confirmation (2026-09-17, Task 10)
+
+Replayed in the exact worker base image (node:22-bookworm-slim + Debian
+`chromium` package, running as uid 10001 ao-worker):
+
+- agent-browser 0.33.1 sha256 verified; `chromium --version` OK.
+- `--remote-debugging-port=0` wrote `DevToolsActivePort`
+  (`33915` + `/devtools/browser/<uuid>`), same format as the workstation run.
+- Env-only attach through that endpoint: `stream disable` then
+  `open https://example.com --json` succeeded against Debian chromium
+  (Chromium 138 in bookworm as of this build).
+- PSS with one loaded page: ~432 MB (workstation Chrome 150 with a blank
+  page measured ~330 MB). Spec's 250-450 MB band holds.
+
+One Dockerfile bug was caught and fixed by this verification: `install`
+does not create `/usr/local/lib/ao`, so the layer now `mkdir -p`s it.
