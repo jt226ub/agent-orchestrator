@@ -168,6 +168,32 @@ func run(logger *slog.Logger) error {
 	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// The in-VM browser service binds synchronously before any terminal opens
+	// so the agent env can never race the listener. A browserd failure must
+	// not kill the worker (same policy as a missing harness): agents lose
+	// browser verbs and everything else keeps running.
+	browserdEnv, stopBrowserd, err := startBrowserd(runCtx, BrowserdOptions{
+		DataDir:   dataDir,
+		SessionID: bootstrap.SessionID,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.Warn("browserd unavailable; continuing without browser verbs", "error", err)
+	} else {
+		defer func() { _ = stopBrowserd(context.Background()) }()
+		if agentCommand.Env == nil {
+			agentCommand.Env = map[string]string{}
+		}
+		for key, value := range browserdEnv {
+			agentCommand.Env[key] = value
+			// Workspace shell terminals inherit the worker environment.
+			if err := os.Setenv(key, value); err != nil {
+				logger.Warn("export browser env failed", "key", key, "error", err)
+			}
+		}
+	}
+
 	started := make(chan error, 1)
 	transportSupervisor := workertransport.Supervisor{
 		Control: client, Workspace: workspace, Logger: logger,
