@@ -143,7 +143,7 @@ git commit -m "docs: record agent-browser attach-mode spike for cloud browser st
   - `const CapabilityHeader = "X-AO-Browser-Capability"`, `const RouteCommands = "/api/v1/browser/commands"`, `const RouteStatus = "/api/v1/browser/status"`
   - `type Authority struct{}`; `func NewAuthority() *Authority`; `func (a *Authority) Issue(sessionID string) (token, verifier string, err error)`; `func (a *Authority) Valid(sessionID, token, verifier string) bool`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `backend/pkg/browsercontract/contract_test.go`:
 
@@ -219,12 +219,12 @@ func TestAuthorityIssueAndValid(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd backend && go test ./pkg/browsercontract/`
 Expected: FAIL, "no Go files" or undefined import.
 
-- [ ] **Step 3: Implement the package**
+- [x] **Step 3: Implement the package**
 
 `backend/pkg/browsercontract/contract.go`:
 
@@ -329,12 +329,12 @@ func capabilityVerifier(sessionID, token string) string {
 }
 ```
 
-- [ ] **Step 4: Run package tests**
+- [x] **Step 4: Run package tests**
 
 Run: `cd backend && go test ./pkg/browsercontract/`
 Expected: PASS.
 
-- [ ] **Step 5: Refactor the internal service to delegate**
+- [x] **Step 5: Refactor the internal service to delegate**
 
 In `backend/internal/service/browser/service.go`: replace the local `actions` map and its check with `browsercontract.Supported(action)`; store `authority *browsercontract.Authority`; in `authorize`, call `s.authority.Valid(string(sessionID), strings.TrimSpace(capability), session.Metadata.BrowserCapabilityVerifier)`. Keep every exported signature unchanged (`domain.SessionID` stays at the boundary; convert with `string(...)`). Replace `backend/internal/service/browser/authority.go` with a two-line alias so the daemon wiring (`backend/internal/daemon/daemon.go` lines 191, 492, 562, 780 all reference `browsersvc.NewAuthority()`/pass it through) compiles untouched:
 
@@ -349,12 +349,12 @@ func NewAuthority() *browsercontract.Authority { return browsercontract.NewAutho
 
 Move the deleted file's test cases into `browsercontract/authority_test.go` if they are not already covered.
 
-- [ ] **Step 6: Run backend tests**
+- [x] **Step 6: Run backend tests**
 
 Run: `cd backend && go build ./... && go test ./internal/service/browser/... ./pkg/browsercontract/...`
 Expected: PASS (existing browser service tests unchanged).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/pkg/browsercontract backend/internal/service/browser
@@ -379,7 +379,7 @@ git commit -m "refactor: extract browser action contract and capability authorit
   - `func NewCommand(transport Transport, clock Clock, long string) *cobra.Command` — the full `browser` verb tree with its persistent `--json` flag (registered internally); `clock == nil` uses `time.Now`; `long == ""` uses the desktop Long text, non-empty overrides it (cloud passes its own wording).
   - `type UsageError error` marker? No — keep the existing `usageError` behavior inside the package by exporting `Errorf`-style helpers only if the moved code needs them; the moved code must use the exported `Usagef(format string, args ...any) error` returning an error the host CLI maps to exit 2. Concretely `clibrowser` defines `type UsageError struct{ error }` and hosts translate `errors.As`.
 
-- [ ] **Step 1: Create the transport interface and move the DTOs**
+- [x] **Step 1: Create the transport interface and move the DTOs**
 
 `backend/pkg/clibrowser/transport.go`:
 
@@ -430,7 +430,7 @@ type Transport interface {
 type Clock func() time.Time
 ```
 
-- [ ] **Step 2: Move the verb tree**
+- [x] **Step 2: Move the verb tree**
 
 Move from `backend/internal/cli/browser.go` into `backend/pkg/clibrowser/command.go`, with exactly these mechanical changes and no behavior changes:
 1. Package clause `package clibrowser`; imports lose `commandContext`.
@@ -443,7 +443,7 @@ Move from `backend/internal/cli/browser.go` into `backend/pkg/clibrowser/command
 8. Constants `browserUntrustedBegin/End`, `maxBrowserWaitMillis` move; the header constant now aliases `browsercontract.CapabilityHeader` (import `backend/pkg/browsercontract`).
 9. The desktop shim builds requests from `clibrowser.CommandRequest` (identical json tags to the old `browserCommandRequestDTO`; `backend/internal/cli/browser_test.go` asserts wire shapes through these types around lines 20 and 497, and those tests move with the tree). Controllers and `backend/internal/httpd/controllers/dto.go` are untouched: the browser routes appear in the generated OpenAPI spec via specgen's `browserOperations()` (build.go line 648), and since no controller DTO changes, no `npm run api` regeneration is needed for this plan (if an executor touches dto.go anyway, the repo rule applies: regenerate and commit).
 
-- [ ] **Step 3: Replace the internal CLI file with a shim**
+- [x] **Step 3: Replace the internal CLI file with a shim**
 
 `backend/internal/cli/browser.go` reduces to:
 
@@ -504,14 +504,14 @@ func (t daemonBrowserTransport) BrowserStatus(ctx context.Context) (clibrowser.S
 
 Adjust imports (`context`, `net/http`, `net/url`, `time`; drop the unused deps import if `commandContext` already carries `deps`). Export `CurrentIdentity` from clibrowser (it is `currentBrowserIdentity` renamed). Keep the desktop `usageError` translation: `internal/cli` already maps package-local `usageError`; add `errors.As(err, &clibrowser.UsageError{})` to its exit-code mapping site (grep `usageError` in `backend/internal/cli` for the single mapping point) so clibrowser usage failures still exit 2.
 
-- [ ] **Step 4: Move and run the tests**
+- [x] **Step 4: Move and run the tests**
 
 Move `backend/internal/cli/browser_test.go` cases that exercise the verb tree (argument validation, output writers, untrusted markers, screenshot file handling, act result rendering) to `backend/pkg/clibrowser/command_test.go`, hosting the tree against a fake `Transport` (recorded actions, canned responses). Cases that exercise daemon transport (error envelopes, request IDs) stay in `internal/cli` against `httptest` servers, now going through the shim. Keep both files' table-driven style.
 
 Run: `cd backend && go build ./... && go test ./internal/cli/... ./pkg/clibrowser/...`
 Expected: PASS with identical coverage breadth.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/pkg/clibrowser backend/internal/cli
@@ -536,7 +536,7 @@ git commit -m "refactor: extract shared ao browser verb tree into pkg/clibrowser
   - `func (c *Chromium) CurrentStatus() Status`
   - `func (c *Chromium) Stop(ctx context.Context) error`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `cloud/internal/vmbrowser/chromium_test.go`:
 
@@ -675,12 +675,12 @@ func TestChromiumStopIsSafeWhenNeverStarted(t *testing.T) {
 
 Implement `crashSpawner` in the test file: a spawner that starts a process whose `Wait()` returns `errors.New("crashed")` immediately and writes a stale DevToolsActivePort so readiness also fails.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./internal/vmbrowser/`
 Expected: FAIL, undefined symbols.
 
-- [ ] **Step 3: Implement the supervisor**
+- [x] **Step 3: Implement the supervisor**
 
 `cloud/internal/vmbrowser/chromium.go` skeleton with the exact behaviors (write the full file):
 
@@ -801,12 +801,12 @@ func (p *execProcess) Stop() error {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run Chromium -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloud/internal/vmbrowser/chromium.go cloud/internal/vmbrowser/chromium_test.go
@@ -823,7 +823,7 @@ git commit -m "feat(cloud): add in-VM chromium supervisor for the session browse
 **Interfaces:**
 - Produces: `func NativeArguments(action string, args map[string]any) ([]string, error)` — exact port of `frontend/src/main/agent-browser-runtime.ts` `nativeArgumentsForAction` + `nativeWaitArguments`, returning `CommandError`-compatible errors via `invalidArgument(msg)`, `referenceRequired(msg)`, `tabIDRequired(msg)` helpers that construct `*CommandError` with codes `INVALID_ARGUMENT`, `REFERENCE_REQUIRED`, `TAB_ID_REQUIRED`, `URL_REQUIRED` (matching the Electron host's codes; see Task 7 for the `CommandError` type).
 
-- [ ] **Step 1: Write the failing table tests (mirror the TS suite plus the wait matrix)**
+- [x] **Step 1: Write the failing table tests (mirror the TS suite plus the wait matrix)**
 
 `cloud/internal/vmbrowser/argv_test.go`:
 
@@ -926,21 +926,21 @@ func TestNativeArguments(t *testing.T) {
 
 Add a dedicated test asserting the stableMs branch produces `["wait", "--fn", <expression>, "--timeout", <timeout>]` with the expression containing `__aoDomStability` and the stableMs value interpolated.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run NativeArguments`
 Expected: FAIL, undefined.
 
-- [ ] **Step 3: Implement the port**
+- [x] **Step 3: Implement the port**
 
 `cloud/internal/vmbrowser/argv.go`: port each branch of `nativeArgumentsForAction` and `nativeWaitArguments` line by line from the TypeScript (source of truth: `frontend/src/main/agent-browser-runtime.ts` lines 623-725), including: `nativeRef` regex `^@?e\d+$` (case-insensitive), `stringValue` trim semantics and `allowEmpty`, `optionalStringValue`, `numberValue` (finite, min/max, round; error text `Numeric argument must be between %d and %d`). The `open` (and `tab-new`) URL branches port `normalizeAgentBrowserURL` (`browser-view-host.ts` lines 3157-3171) with its helpers `withDefaultScheme` (line 2402), `looksLikeHost` (line 2420), `isLocalhostLike` (line 2452), and `normalizeBrowserURL` (line 495), producing the desktop error codes `URL_REQUIRED`, `INVALID_URL`, `BROWSER_URL_FORBIDDEN`. The stableMs branch interpolates the exact MutationObserver expression from the TS (copy it verbatim; it is a JS string passed through).
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run NativeArguments -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloud/internal/vmbrowser/argv.go cloud/internal/vmbrowser/argv_test.go
@@ -965,7 +965,7 @@ git commit -m "feat(cloud): port agent-browser argv translation for the in-VM br
   - `func (e *Engine) Screenshot(ctx context.Context) (data string, width, height int, err error)` — base64 PNG.
   - `func (e *Engine) Close(ctx context.Context) error`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `cloud/internal/vmbrowser/engine_test.go` (fake runner records invocations):
 
@@ -1108,12 +1108,12 @@ func TestEngineScreenshotReturnsBase64WithDimensions(t *testing.T) {
 
 Helper `newTestEngine` builds a `Chromium` on the fake spawner from Task 4 (endpoint `ws://127.0.0.1:9333/devtools/browser/test-uuid`), a temp `Root`, session `sess-1`. `buildTestPNG` writes a minimal 8-byte-signature + IHDR PNG (construct bytes directly; do not link image libs). Implement `equalStrings`, `hasEnvPrefix` helpers in the test file. If the fake-chromium path makes engine construction awkward, add a small `withEndpoint` test seam on Engine instead of contorting the spawner.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run Engine`
 Expected: FAIL, undefined.
 
-- [ ] **Step 3: Implement the engine**
+- [x] **Step 3: Implement the engine**
 
 `cloud/internal/vmbrowser/engine.go` key behaviors (write the full file):
 
@@ -1125,12 +1125,12 @@ Expected: FAIL, undefined.
 6. Production runner (`execRunner`): `exec.CommandContext` with the timeout, `Stdout`/`Stderr` into capped buffers, stdin `nil`.
 7. `Close(ctx)`: best-effort cleanup — run `close` once through the runner (ignore errors, mirroring the Electron close-timeout tolerance), then `chromium.Stop(ctx)`; safe to call when nothing ever started. A command that races an idle-shutdown or Close may fail once with `AGENT_BROWSER_COMMAND_FAILED`; the next command lazily restarts Chromium, which is the documented recovery path.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run Engine -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloud/internal/vmbrowser/engine.go cloud/internal/vmbrowser/engine_test.go
@@ -1147,7 +1147,7 @@ git commit -m "feat(cloud): add agent-browser engine for the in-VM browser servi
 **Interfaces:**
 - Produces: `type MatchOutcome struct { Outcome string; Candidate MatchedElement; Candidates []MatchedElement }` with outcomes `matched`, `ambiguous`, `no-match`; `type MatchedElement struct { Ref, Role, Name string }`; `func MatchInstruction(instruction string, refs any, opts MatchOptions) MatchOutcome` with `type MatchOptions struct { Nth int }`.
 
-- [ ] **Step 1: Port the tests**
+- [x] **Step 1: Port the tests**
 
 Read `frontend/src/main/browser-act-matcher.test.ts` (201 lines) and port each table case into `cloud/internal/vmbrowser/actmatcher_test.go`, converting the TS fixture `refs` payloads (the `refs` value from snapshot JSON) into the same `map[string]any`/`[]any` structures the Go engine will see after JSON-decoding agent-browser output. Keep case names and expectations identical. Example shape:
 
@@ -1184,21 +1184,21 @@ func TestMatchInstruction(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run MatchInstruction`
 Expected: FAIL, undefined.
 
-- [ ] **Step 3: Port the implementation**
+- [x] **Step 3: Port the implementation**
 
 Port `frontend/src/main/browser-act-matcher.ts` (127 lines) function by function into `actmatcher.go`: tokenization, stopword handling, role synonyms, name/text scoring, tie detection and `nth` disambiguation. The Go version operates on `any` (decoded JSON): normalize `refs` accepting both the shape agent-browser emits and defensively nothing else; return `no-match` on unrecognized shapes rather than panicking.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run MatchInstruction -v`
 Expected: PASS, case-for-case parity with the TS suite.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloud/internal/vmbrowser/actmatcher.go cloud/internal/vmbrowser/actmatcher_test.go
@@ -1220,7 +1220,7 @@ git commit -m "feat(cloud): port deterministic act instruction matcher for the i
   - `func (s *Service) Handler() http.Handler` — routes `POST /api/v1/browser/commands`, `GET /api/v1/browser/status`
   - `func (s *Service) Status(ctx context.Context) (Connected bool, StartedAt time.Time)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `cloud/internal/vmbrowser/service_test.go` (httptest against `Handler()`; engine backed by the fake runner from Task 6):
 
@@ -1333,12 +1333,12 @@ func TestServiceStatusRoute(t *testing.T) {
 
 Write `post`/`get`/`assertEnvelope`/`validCapability`/`newTestService` helpers in the test file (capability minted via `browsercontract.NewAuthority().Issue("sess-1")`). `assertEnvelope` checks top-level `code` and non-empty `message` and `requestId`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -run Service`
 Expected: FAIL, undefined.
 
-- [ ] **Step 3: Implement the service**
+- [x] **Step 3: Implement the service**
 
 `cloud/internal/vmbrowser/service.go`:
 
@@ -1359,12 +1359,12 @@ Expected: FAIL, undefined.
    - cloud-unsupported set → `BROWSER_ACTION_UNSUPPORTED_CLOUD` ("This browser action is not available in cloud sessions yet").
 5. `GET /api/v1/browser/status`: `{sessionId, connected: <engine/chromium running>, connectedAt, transport: "vm-chromium"}`; missing `sessionId` query → 400 `SESSION_ID_REQUIRED`; capability enforced identically.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd cloud && go test ./internal/vmbrowser/ -v`
 Expected: PASS (all files).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloud/internal/vmbrowser/service.go cloud/internal/vmbrowser/service_test.go
@@ -1385,7 +1385,7 @@ git commit -m "feat(cloud): add loopback browser service speaking the desktop br
   - `func runBrowserd(ctx context.Context, opts BrowserdOptions) error` with `type BrowserdOptions struct { DataDir, SessionID string; AgentEnv map[string]string; Logger *slog.Logger }` — mints the capability, starts the loopback listener on `127.0.0.1:0`, writes nothing to disk except the browser root, injects `AO_BROWSER_CAPABILITY` and `AO_BROWSER_API_URL` into `AgentEnv` (caller owns applying it), serves until ctx done.
   - ao-cloud-agent: `ao browser ...` dispatches to `clibrowser.NewCommand(transport, nil, <cloud long text>)` with a transport reading `AO_BROWSER_API_URL` + `AO_BROWSER_CAPABILITY`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `cloud/cmd/ao-worker/browserd_test.go`:
 
@@ -1450,12 +1450,12 @@ func TestBrowserSubcommandMounted(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd cloud && go test ./cmd/ao-worker/ ./cmd/ao-cloud-agent/`
 Expected: FAIL, undefined.
 
-- [ ] **Step 3: Implement `runBrowserd`**
+- [x] **Step 3: Implement `runBrowserd`**
 
 `cloud/cmd/ao-worker/browserd.go`:
 
@@ -1548,7 +1548,7 @@ Operational details that must not be lost:
 - Idle shutdown (spec D7): a `time.Ticker` inside browserd calls `chromium.Stop` after 30 minutes with no served command and no viewer (Stage 1: no viewers exist, so command activity is the only input). Make the idle duration a field on `BrowserdOptions` (default 30 min) and unit-test it with a millisecond-scale value.
 - `startBrowserd` must not write `AO_RUN_FILE`; the cloud transport is URL-based (`AO_BROWSER_API_URL`), not run-file based.
 
-- [ ] **Step 4: Mount the verbs in ao-cloud-agent**
+- [x] **Step 4: Mount the verbs in ao-cloud-agent**
 
 In `cloud/cmd/ao-cloud-agent/main.go` `run()`: after the existing arg parsing, before the switch on `args[0]`, add:
 
@@ -1585,12 +1585,12 @@ Two presentation fixes required in the same change:
 - Add `browser` to `printUsage` in `cloud/cmd/ao-cloud-agent/main.go` (it currently lists hooks, spawn, list, send, kill, claim-pr).
 - The verb tree's Long text says "The desktop app must be open.", which is false in cloud. Give `clibrowser.NewCommand` an optional `Long string` parameter (empty = desktop default) and pass a cloud wording: "Commands operate the session's browser service inside this cloud sandbox." Desktop behavior and help output stay byte-identical.
 
-- [ ] **Step 5: Run tests and both module builds**
+- [x] **Step 5: Run tests and both module builds**
 
 Run: `cd cloud && go test ./cmd/... ./internal/vmbrowser/... && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add cloud/cmd/ao-worker cloud/cmd/ao-cloud-agent
@@ -1609,7 +1609,7 @@ git commit -m "feat(cloud): run the in-VM browser service and mount ao browser v
 - Consumes: agent-browser pin table from Global Constraints; bookworm chromium package.
 - Produces: worker image containing `/usr/bin/chromium`, `/usr/local/lib/ao/agent-browser` (0o755), reachable when the worker runs as `ao-worker`.
 
-- [ ] **Step 1: Extend the worker stage**
+- [x] **Step 1: Extend the worker stage**
 
 In `cloud/Dockerfile` worker stage, add to the first `apt-get install` list: `chromium` (bookworm ships a usable headless build). After the cursor-agent RUN block, add:
 
@@ -1632,12 +1632,12 @@ RUN set -eu; \
 
 Add `AO_CLOUD_CHROMIUM_PATH=/usr/bin/chromium` and `AO_CLOUD_AGENT_BROWSER_PATH=/usr/local/lib/ao/agent-browser` as ENV in the worker stage, and make Task 9's `chromiumBinaryPath()`/engine `BinaryPath` read them (update Task 9's helpers if they hardcoded paths).
 
-- [ ] **Step 2: Build the image locally**
+- [x] **Step 2: Build the image locally**
 
 Run: `docker build --target worker -t ao-cloud-worker:browser-stage1 cloud/`
 Expected: build succeeds; the `--version` checks in the layer pass (proves the binaries execute).
 
-- [ ] **Step 3: Smoke the image manually**
+- [x] **Step 3: Smoke the image manually**
 
 ```bash
 docker run --rm ao-cloud-worker:browser-stage1 sh -c 'chromium --headless=new --remote-debugging-address=127.0.0.1 --remote-debugging-port=0 --user-data-dir=/tmp/p --no-first-run --no-sandbox --disable-dev-shm-usage about:blank & sleep 2; ls /tmp/p/DevToolsActivePort && cat /tmp/p/DevToolsActivePort'
@@ -1645,7 +1645,7 @@ docker run --rm ao-cloud-worker:browser-stage1 sh -c 'chromium --headless=new --
 
 Expected: the DevToolsActivePort file exists and prints a port plus browser path. Record output in the Task 1 notes file as image-level confirmation.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add cloud/Dockerfile
@@ -1670,11 +1670,11 @@ replace github.com/aoagents/agent-orchestrator/backend => github.com/Untrivial-a
 
 using the commit that contains Task 2-3 (find it with `git log --format='%H %cI' -- backend/pkg/browsercontract | head -1` after push; convert to the pseudo-version with `go mod download github.com/aoagents/agent-orchestrator/backend@<sha>` inside a scratch module, or `GOFLAGS=-mod=mod go get github.com/Untrivial-ai/agent-orchestrator/backend@<sha>` from `cloud/` with the workspace disabled via `GOWORK=off`). Then `cd cloud && GOWORK=off go build ./...` to prove the standalone build resolves. If the branch is not yet pushed, do this step last, immediately before handoff, against the pushed branch head.
 
-- [ ] **Step 2: Document the engine**
+- [x] **Step 2: Document the engine**
 
 Add a "Session browser (Stage 1)" section to `docs/cloud-development.md`: what browserd is, the env vars it injects (`AO_BROWSER_CAPABILITY`, `AO_BROWSER_API_URL`), the verb matrix (supported vs `BROWSER_ACTION_UNSUPPORTED_CLOUD`), the lazy/idle lifecycle, profile location `<dataDir>/browser/<sessionID>/profile`, and how to try it locally with `test-cloud-local.sh` plus `docker exec <worker> ao browser open https://example.com`.
 
-- [ ] **Step 3: Full local verification**
+- [x] **Step 3: Full local verification**
 
 CI coverage reality (verified 2026-09-17): `.github/workflows/go.yml` tests `backend/` only (its path filter and working-directory never touch `cloud/`), `npm run lint` is backend go test + golangci-lint, and the public repo has no workflow that runs `cloud/` tests (cloud CI, if any, lives with the private submodule). Therefore the CLOUD module's gate is local: these commands are the authoritative check, and CI greenness alone does not cover this plan's cloud changes.
 
