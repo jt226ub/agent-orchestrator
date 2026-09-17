@@ -115,6 +115,9 @@ docker exec "$(docker ps -q --filter label=ao.provider=docker | head -1)" \
   ao browser snapshot --interactive
 ```
 
+Full manual instructions, including running the same production service on a
+CreateOS sandbox VM without any control plane: `docs/cloud-browser-stage1.md`.
+
 ## Private implementation status
 
 The private repository now contains:
