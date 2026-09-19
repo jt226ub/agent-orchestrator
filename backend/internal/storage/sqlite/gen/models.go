@@ -142,6 +142,20 @@ type AgentSwitchFailureReceipt struct {
 	RetainUntil             sql.NullTime
 }
 
+type AgyAccountSwitch struct {
+	ID                     string
+	SourceAccountID        string
+	TargetAccountID        string
+	IdempotencyKey         string
+	Phase                  string
+	FailureCode            string
+	CredentialsCommittedAt sql.NullTime
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	CompletedAt            sql.NullTime
+	SourceKind             string
+}
+
 type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode

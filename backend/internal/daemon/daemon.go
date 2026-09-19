@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	agyagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
@@ -28,6 +29,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry/policyauthority"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agyops"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/codexops"
@@ -479,6 +481,18 @@ func Run() error {
 		return fmt.Errorf("resolve device-global Codex home: %w", err)
 	}
 	codexOperationGate := codexops.NewGate()
+	// The Antigravity CLI keys its config directory off HOME, so the user's
+	// home is the device-global account home; the vault mirrors Codex's layout.
+	agyHome, err := os.UserHomeDir()
+	if err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("resolve device-global Antigravity home: %w", err)
+	}
+	agyOperationGate := agyops.NewGate()
 	agentDeps := agentsvc.Deps{
 		Cache: store, Discoverer: modelDiscoverer, Projects: store, Sessions: store, Context: ctx, Logger: log,
 		CodexAccountRoot:       filepath.Join(cfg.StateDir, "harnesses", "codex", "accounts"),
@@ -489,12 +503,21 @@ func Run() error {
 		CodexAccounts: codexappserver.NewAccountFactoryWithResolver(func(resolveCtx context.Context) (string, error) {
 			return codexagent.New().ResolveBinary(resolveCtx)
 		}, log),
-		CodexOperationGate: codexOperationGate,
+		CodexOperationGate:   codexOperationGate,
+		AgyAccountRoot:       filepath.Join(cfg.StateDir, "harnesses", "agy", "accounts"),
+		AgyPendingRoot:       filepath.Join(cfg.StateDir, "harnesses", "agy", "pending-accounts"),
+		AgySwitchStagingRoot: filepath.Join(cfg.StateDir, "harnesses", "agy", "switch-staging"),
+		AgyGlobalHome:        agyHome,
+		AgyAccountSwitches:   store,
+		AgyAccounts: agyagent.NewAccountFactoryWithResolver(func(resolveCtx context.Context) (string, error) {
+			return agyagent.New().ResolveBinary(resolveCtx)
+		}, log),
+		AgyOperationGate: agyOperationGate,
 	}
 	agentSvc = agentsvc.NewWithDeps(agentDeps)
 	agentSvc.WarmModelCatalogs(ctx)
 
-	sessionSvc, reviewSvc, wiredSessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, policyCoordinator, tracker, codexOperationGate, log)
+	sessionSvc, reviewSvc, wiredSessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, policyCoordinator, tracker, codexOperationGate, agyOperationGate, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -571,6 +594,7 @@ func Run() error {
 	systemChecks.SetGitHubAuthTerminalOpener(shellTermSvc)
 	agentAuthSvc := agentauth.NewWithAgentResolver(hostCommands, agentSvc, shellTermSvc)
 	agentSvc.SetCodexAccountLoginTerminalOpener(shellTermSvc)
+	agentSvc.SetAgyAccountLoginTerminalOpener(shellTermSvc)
 	// Late-bound so Kill/Cleanup close a session's scoped shells before its
 	// worktree is torn down (shellTermSvc cannot exist before sessMgr does; see
 	// SetShellTerminalCloser).
@@ -646,6 +670,9 @@ func Run() error {
 	if reconcileErr := agentSvc.ReconcileCodexAccountSwitches(ctx); reconcileErr != nil {
 		log.Warn("Codex account switch recovery deferred", "err", reconcileErr)
 	}
+	if reconcileErr := agentSvc.ReconcileAgyAccountSwitches(ctx); reconcileErr != nil {
+		log.Warn("Antigravity account switch recovery deferred", "err", reconcileErr)
+	}
 
 	// Durable agent-switch and interface-transition recovery is the startup
 	// safety boundary. The in-memory input fence disappeared with the previous
@@ -662,6 +689,7 @@ func Run() error {
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
 	}
 	agentSvc.WarmCodexAccounts()
+	agentSvc.WarmAgyAccounts()
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
 	// Push-device registry: persisted phones that receive OS push notifications.
@@ -752,6 +780,7 @@ func Run() error {
 		Endpoints:          bs,
 		Agents:             agentSvc,
 		CodexAccounts:      agentSvc,
+		AgyAccounts:        agentSvc,
 		AgyCapacity:        agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
@@ -917,6 +946,11 @@ func Run() error {
 		log.Error("Codex account switch worker shutdown", "err", err)
 	}
 	codexSwitchCancel()
+	agySwitchStopCtx, agySwitchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := agentSvc.WaitAgyAccountSwitchWorkers(agySwitchStopCtx); err != nil {
+		log.Error("Antigravity account switch worker shutdown", "err", err)
+	}
+	agySwitchCancel()
 	managedPreview.Close()
 	<-previewDone
 	// Detach chat controllers before stopping the lifecycle stack. Persistent

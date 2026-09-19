@@ -428,6 +428,7 @@ type Manager struct {
 	executable                     func() (string, error)
 	newLaunchID                    func() string
 	codexOperationGate             ports.CodexOperationGate
+	agyOperationGate               ports.AgyOperationGate
 	startupBackgroundReconcileDone chan struct{}
 	startupBackgroundReconcileOnce sync.Once
 	statusRecoveryMu               sync.RWMutex
@@ -731,6 +732,9 @@ type Deps struct {
 	// CodexOperationGate is shared with account clients and reviewer launches.
 	// Nil preserves focused-test compatibility by disabling device-global gating.
 	CodexOperationGate ports.CodexOperationGate
+	// AgyOperationGate is shared with the Antigravity account manager so a
+	// credential switch fences new Antigravity launches the way Codex's does.
+	AgyOperationGate ports.AgyOperationGate
 	// ReconcileWorkers bounds concurrent live-session recovery during daemon
 	// startup. Values below one preserve the serial default for embedders/tests;
 	// production explicitly opts into a small worker pool.
@@ -771,6 +775,7 @@ func New(d Deps) *Manager {
 		executable:                     d.Executable,
 		newLaunchID:                    d.NewLaunchID,
 		codexOperationGate:             defaultCodexOperationGate(d.CodexOperationGate),
+		agyOperationGate:               defaultAgyOperationGate(d.AgyOperationGate),
 		backgroundContext:              d.BackgroundContext,
 		startupBackgroundReconcileDone: make(chan struct{}),
 		agentOperations:                make(map[domain.SessionID]agentOperationKind),
@@ -1096,6 +1101,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	defer releaseCodexAdmission()
+	releaseAgyAdmission, err := m.acquireAgyControllerAdmission(ctx, cfg.Harness)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
+	}
+	defer releaseAgyAdmission()
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -2566,6 +2577,12 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	defer releaseCodexAdmission()
+	releaseAgyAdmission, err := m.acquireAgyControllerAdmission(ctx, rec.Harness)
+	if err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
+	}
+	defer releaseAgyAdmission()
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,

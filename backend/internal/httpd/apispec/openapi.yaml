@@ -351,6 +351,401 @@ paths:
       summary: Verify an installed harness without reinstalling or probing authentication
       tags:
       - agents
+  /api/v1/agents/agy/account-switches:
+    post:
+      operationId: startAgyAccountSwitch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAgyAccountSwitchRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start a global AO Agy account switch
+      tags:
+      - agents
+  /api/v1/agents/agy/account-switches/{switchId}:
+    get:
+      operationId: getAgyAccountSwitch
+      parameters:
+      - description: Durable Agy account switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Agy account switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read one durable Agy account switch
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts:
+    get:
+      operationId: getAgyAccounts
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Return cached AO Agy accounts and active-account state
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/{accountId}:
+    delete:
+      operationId: deleteAgyAccount
+      parameters:
+      - description: AO Agy account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Agy account identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Delete one inactive signed-out Agy account
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/{accountId}/login-terminal:
+    post:
+      operationId: openAgyAccountReauthenticationTerminal
+      parameters:
+      - description: AO Agy account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Agy account identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAgyAccountLoginTerminalResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open native Agy sign-in for one retained account
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/{accountId}/logout:
+    post:
+      operationId: logoutAgyAccount
+      parameters:
+      - description: AO Agy account identifier.
+        in: path
+        name: accountId
+        required: true
+        schema:
+          description: AO Agy account identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Log out one retained Agy account
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/ensure:
+    post:
+      operationId: ensureAgyAccounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureAgyAccountsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Discover Antigravity accounts and ensure authentication and capacity
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/events:
+    get:
+      operationId: streamAgyAccounts
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgyAccountsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Stream cached and live Agy account state
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/login-operations/{operationId}/cancel:
+    post:
+      operationId: cancelAgyAccountLogin
+      parameters:
+      - description: In-memory Agy account login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Agy account login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel one native Agy account login operation
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/login-operations/{operationId}/verify:
+    post:
+      operationId: verifyAgyAccountLogin
+      parameters:
+      - description: In-memory Agy account login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Agy account login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgyAccountLoginResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Verify one native Agy account login operation
+      tags:
+      - agents
+  /api/v1/agents/agy/accounts/login-terminal:
+    post:
+      operationId: openAgyAccountLoginTerminal
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAgyAccountLoginTerminalResponse'
+          description: Accepted
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open an inline native login terminal for a new AO Agy account
+      tags:
+      - agents
   /api/v1/agents/agy/capacity:
     get:
       operationId: getAgyCapacity
@@ -7668,6 +8063,272 @@ components:
       required:
       - switch
       type: object
+    AgyAccountCapabilitiesResponse:
+      properties:
+        globalSwitch:
+          $ref: '#/components/schemas/AgyCapabilityObservationResponse'
+        nativeLogin:
+          $ref: '#/components/schemas/AgyCapabilityObservationResponse'
+      required:
+      - nativeLogin
+      - globalSwitch
+      type: object
+    AgyAccountLoginResponse:
+      properties:
+        account:
+          $ref: '#/components/schemas/AgyAccountResponse'
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - retryable
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      type: object
+    AgyAccountLoginTerminalResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        handleId:
+          type: string
+        title:
+          type: string
+      required:
+      - handleId
+      - title
+      - createdAt
+      type: object
+    AgyAccountResponse:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        active:
+          type: boolean
+        authMethod:
+          enum:
+          - google
+          - other
+          - unknown
+          type: string
+        authentication:
+          $ref: '#/components/schemas/AgyAuthenticationResponse'
+        capacity:
+          $ref: '#/components/schemas/AgyCapacityResponse'
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - valid
+          - signed_out
+          - broken
+          type: string
+      required:
+      - id
+      - label
+      - status
+      - reasonCode
+      - reason
+      - active
+      - authentication
+      - authMethod
+      - capacity
+      - createdAt
+      type: object
+    AgyAccountSwitchResponse:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        credentialsCommittedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        failureCode:
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - checkpointing_source
+          - activating_target
+          - recovery_required
+          - completed
+          - failed
+          type: string
+        sourceAccountId:
+          type: string
+        sourceKind:
+          enum:
+          - managed
+          - device
+          - none
+          type: string
+        targetAccountId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sourceKind
+      - targetAccountId
+      - phase
+      - createdAt
+      - updatedAt
+      type: object
+    AgyAccountsResponse:
+      properties:
+        accountRevision:
+          format: int64
+          type: integer
+        accounts:
+          items:
+            $ref: '#/components/schemas/AgyAccountResponse'
+          type: array
+        activeAccountId:
+          type: string
+        activeLogin:
+          $ref: '#/components/schemas/AgyActiveLoginResponse'
+        capabilities:
+          $ref: '#/components/schemas/AgyAccountCapabilitiesResponse'
+        currentSwitch:
+          $ref: '#/components/schemas/AgyAccountSwitchResponse'
+        deviceReconciliation:
+          $ref: '#/components/schemas/AgyDeviceReconciliationResponse'
+      required:
+      - accountRevision
+      - accounts
+      - capabilities
+      - deviceReconciliation
+      type: object
+    AgyActiveLoginResponse:
+      properties:
+        accountId:
+          type: string
+        expiresAt:
+          format: date-time
+          type: string
+        operationId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        shellTerminal:
+          $ref: '#/components/schemas/AgyAccountLoginTerminalResponse'
+        status:
+          enum:
+          - pending
+          - verifying
+          - unauthorized
+          - retryable
+          - completed
+          - cancelled
+          - failed
+          - expired
+          type: string
+      required:
+      - operationId
+      - status
+      - reasonCode
+      - reason
+      - expiresAt
+      - shellTerminal
+      type: object
+    AgyAuthenticationResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          - not_applicable
+          type: string
+      required:
+      - state
+      - freshness
+      - checkedAt
+      - attemptedAt
+      - reasonCode
+      - reason
+      type: object
+    AgyCapabilityObservationResponse:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - supported
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - state
+      - reasonCode
+      - reason
+      type: object
     AgyCapacityBucketResponse:
       properties:
         displayName:
@@ -7762,6 +8423,43 @@ components:
           - integer
       required:
       - usedPercent
+      type: object
+    AgyDeviceReconciliationResponse:
+      properties:
+        activeAccountVerified:
+          type: boolean
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        nextRetryAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        reasonCode:
+          type: string
+        retryable:
+          type: boolean
+        status:
+          enum:
+          - not_checked
+          - checking
+          - verified
+          - temporarily_unavailable
+          - blocked
+          type: string
+        verifiedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+      required:
+      - status
+      - activeAccountVerified
+      - reasonCode
+      - retryable
       type: object
     AttachmentInput:
       properties:
@@ -9655,6 +10353,17 @@ components:
       required:
       - purpose
       type: object
+    EnsureAgyAccountsRequest:
+      properties:
+        accountIds:
+          items:
+            type: string
+          type: array
+        forceAuthentication:
+          type: boolean
+        forceDeviceReconciliation:
+          type: boolean
+      type: object
     EnsureAgyCapacityRequest:
       properties:
         force:
@@ -10513,6 +11222,16 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenAgyAccountLoginTerminalResponse:
+      properties:
+        operation:
+          $ref: '#/components/schemas/AgyAccountLoginResponse'
+        shellTerminal:
+          $ref: '#/components/schemas/AgyAccountLoginTerminalResponse'
+      required:
+      - operation
+      - shellTerminal
       type: object
     OpenCodexAccountLoginTerminalResponse:
       properties:
@@ -12119,6 +12838,24 @@ components:
           - install
           - reinstall
           type: string
+      type: object
+    StartAgyAccountSwitchRequest:
+      properties:
+        expectedAccountRevision:
+          deprecated: true
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        idempotencyKey:
+          minLength: 1
+          type: string
+        targetAccountId:
+          minLength: 1
+          type: string
+      required:
+      - targetAccountId
+      - idempotencyKey
       type: object
     StartCodexAccountSwitchRequest:
       properties:

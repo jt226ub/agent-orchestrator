@@ -83,6 +83,8 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/api/v1/system/install/tmux",
 		"/api/v1/sessions/ao-1/preview/server",
 		"/api/v1/agents/codex/accounts",
+		"/api/v1/agents/agy/accounts",
+		"/api/v1/agents/agy/account-switches",
 		"/api/v1/agents/codex/accounts/login-terminal",
 		"/api/v1/agents/codex/accounts/login-operations/op-1/verify",
 		"/api/v1/agents/codex/account-switches",
