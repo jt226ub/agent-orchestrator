@@ -55,6 +55,10 @@ type ProfileDraft = {
 	permissions: string;
 	rulesFile: string;
 	env: string;
+	// Quota admission (agy profiles): percentages as typed, "" for unset.
+	warnBelowPercent: string;
+	refuseBelowPercent: string;
+	fallbackProfile: string;
 };
 
 // A template as edited on the Templates tab: which profile fills each role slot
@@ -708,6 +712,7 @@ function SettingsBody({
 						<ProfileCard
 							key={draft.key}
 							draft={draft}
+							profiles={form.profiles}
 							projectId={projectId}
 							agents={agentCatalog?.agents}
 							agentsLoading={agentsQuery.isFetching && agentCatalog === undefined}
@@ -727,11 +732,13 @@ function SettingsBody({
 							onDelete={() =>
 								setForm((f) => ({
 									...f,
-									profiles: f.profiles.filter((p) => p.key !== draft.key),
 									workerProfile: f.workerProfile === draft.name.trim() ? "" : f.workerProfile,
 									orchestratorProfile: f.orchestratorProfile === draft.name.trim() ? "" : f.orchestratorProfile,
 									reviewerProfile: f.reviewerProfile === draft.name.trim() ? "" : f.reviewerProfile,
 									templates: f.templates.map((tpl) => unbindProfile(tpl, draft.name.trim())),
+									profiles: f.profiles
+										.filter((p) => p.key !== draft.key)
+										.map((p) => (p.fallbackProfile.trim() === draft.name.trim() ? { ...p, fallbackProfile: "" } : p)),
 								}))
 							}
 						/>
@@ -744,7 +751,7 @@ function SettingsBody({
 							onClick={() =>
 								setForm((f) => ({
 									...f,
-									profiles: [...f.profiles, { key: newProfileKey(), name: nextProfileName("profile", f.profiles), agent: "", model: "", permissions: "", rulesFile: "", env: "" }],
+									profiles: [...f.profiles, { key: newProfileKey(), name: nextProfileName("profile", f.profiles), agent: "", model: "", permissions: "", rulesFile: "", env: "", warnBelowPercent: "", refuseBelowPercent: "", fallbackProfile: "" }],
 								}))
 							}
 						>
@@ -1093,6 +1100,7 @@ function ProfileRoleRow({
 
 function ProfileCard({
 	draft,
+	profiles,
 	projectId,
 	agents,
 	agentsLoading,
@@ -1101,6 +1109,7 @@ function ProfileCard({
 	onDelete,
 }: {
 	draft: ProfileDraft;
+	profiles: ProfileDraft[];
 	projectId: string;
 	agents?: components["schemas"]["AgentReadinessSnapshot"][];
 	agentsLoading: boolean;
@@ -1184,6 +1193,44 @@ function ProfileCard({
 					onChange={(event) => onChange({ env: event.target.value })}
 				/>
 			</SettingsRow>
+			{draft.agent === "agy" ? (
+				<>
+					<SettingsRow label={t("settings.project.profileQuotaWarn")} description={t("settings.project.profileQuotaHint")}>
+						<Input
+							aria-label={t("settings.project.profileQuotaWarnFor", { name })}
+							className="max-w-24 text-right"
+							inputMode="numeric"
+							placeholder="20"
+							value={draft.warnBelowPercent}
+							onChange={(event) => onChange({ warnBelowPercent: event.target.value })}
+						/>
+					</SettingsRow>
+					<SettingsRow label={t("settings.project.profileQuotaRefuse")}>
+						<Input
+							aria-label={t("settings.project.profileQuotaRefuseFor", { name })}
+							className="max-w-24 text-right"
+							inputMode="numeric"
+							placeholder="0"
+							value={draft.refuseBelowPercent}
+							onChange={(event) => onChange({ refuseBelowPercent: event.target.value })}
+						/>
+					</SettingsRow>
+					<SettingsRow label={t("settings.project.profileFallback")} description={t("settings.project.profileFallbackHint")}>
+						<SettingsOptionMenu
+							aria-label={t("settings.project.profileFallbackFor", { name })}
+							value={draft.fallbackProfile || "__none__"}
+							options={[
+								{ value: "__none__", label: t("settings.project.profileNone") },
+								...profiles
+									.map((p) => p.name.trim())
+									.filter((other) => other !== "" && other !== draft.name.trim())
+									.map((other) => ({ value: other, label: other })),
+							]}
+							onChange={(fallbackProfile) => onChange({ fallbackProfile: fallbackProfile === "__none__" ? "" : fallbackProfile })}
+						/>
+					</SettingsRow>
+				</>
+			) : null}
 		</div>
 	);
 }
@@ -1371,6 +1418,9 @@ function profileDraftsFromConfig(profiles: Record<string, RoleProfile> | undefin
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([k, v]) => `${k}=${v}`)
 				.join("\n"),
+			warnBelowPercent: profile.quota?.warnBelowPercent !== undefined ? String(profile.quota.warnBelowPercent) : "",
+			refuseBelowPercent: profile.quota ? String(profile.quota.refuseBelowPercent ?? 0) : "",
+			fallbackProfile: profile.fallback?.profile ?? "",
 		}));
 }
 
@@ -1402,6 +1452,15 @@ function profilesFromDrafts(drafts: ProfileDraft[]): Record<string, RoleProfile>
 		if (draft.rulesFile.trim()) profile.rulesFile = draft.rulesFile.trim();
 		const env = parseEnvLines(draft.env);
 		if (env) profile.env = env;
+		const warn = draft.warnBelowPercent.trim();
+		const refuse = draft.refuseBelowPercent.trim();
+		if (warn !== "" || refuse !== "") {
+			profile.quota = {
+				...(warn !== "" ? { warnBelowPercent: Number(warn) } : {}),
+				...(refuse !== "" ? { refuseBelowPercent: Number(refuse) } : {}),
+			};
+		}
+		if (draft.fallbackProfile.trim()) profile.fallback = { profile: draft.fallbackProfile.trim() };
 		profiles[name] = profile;
 	}
 	return Object.keys(profiles).length > 0 ? profiles : undefined;
@@ -1415,6 +1474,15 @@ function validateProfileDrafts(drafts: ProfileDraft[], t: TFunction): string | n
 		if (/[\/\\]/.test(name) || name === "." || name === "..") return t("settings.project.profileNameInvalid", { name });
 		if (seen.has(name)) return t("settings.project.profileNameDuplicate", { name });
 		seen.add(name);
+		for (const value of [draft.warnBelowPercent, draft.refuseBelowPercent]) {
+			const text = value.trim();
+			if (text === "") continue;
+			const n = Number(text);
+			if (!Number.isFinite(n) || n < 0 || n > 100) return t("settings.project.profileQuotaInvalid", { name });
+		}
+		if (draft.fallbackProfile.trim() !== "" && draft.warnBelowPercent.trim() === "" && draft.refuseBelowPercent.trim() === "") {
+			return t("settings.project.profileFallbackNeedsQuota", { name });
+		}
 	}
 	return null;
 }

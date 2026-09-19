@@ -93,6 +93,19 @@ type roleProfile struct {
 	AgentConfig agentConfig       `json:"agentConfig,omitempty"`
 	RulesFile   string            `json:"rulesFile,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
+	Quota       *profileQuota     `json:"quota,omitempty"`
+	Fallback    *profileFallback  `json:"fallback,omitempty"`
+}
+
+// profileQuota mirrors domain.ProfileQuota.
+type profileQuota struct {
+	WarnBelowPercent   float64 `json:"warnBelowPercent,omitempty"`
+	RefuseBelowPercent float64 `json:"refuseBelowPercent,omitempty"`
+}
+
+// profileFallback mirrors domain.ProfileFallback.
+type profileFallback struct {
+	Profile string `json:"profile,omitempty"`
 }
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.

@@ -262,6 +262,11 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		CodexOperationGate:  codexOperationGate,
 	})
 	mgr.SetAgentReadiness(agentReadiness)
+	// The agent service also owns the Antigravity capacity coordinator, which
+	// role profiles with a quota consult at spawn.
+	if capacity, ok := agentReadiness.(ports.AgyCapacityProvider); ok {
+		mgr.SetAgyCapacity(capacity)
+	}
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,

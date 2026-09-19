@@ -9548,6 +9548,24 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainProfileFallback:
+      properties:
+        profile:
+          type: string
+      type: object
+    DomainProfileQuota:
+      properties:
+        refuseBelowPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+        warnBelowPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+      type: object
     DomainReviewerConfig:
       properties:
         agentConfig:
@@ -11112,6 +11130,10 @@ components:
           additionalProperties:
             type: string
           type: object
+        fallback:
+          $ref: '#/components/schemas/DomainProfileFallback'
+        quota:
+          $ref: '#/components/schemas/DomainProfileQuota'
         rulesFile:
           type: string
       type: object

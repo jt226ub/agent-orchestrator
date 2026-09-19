@@ -3,8 +3,8 @@ package domain
 import "time"
 
 // AgyCapacityState is the display-safe plan-capacity classification for the
-// Antigravity CLI's signed-in Google account. Capacity is advisory and never
-// participates in launch admission, matching Codex capacity.
+// Antigravity CLI's signed-in Google account. Capacity is advisory, matching
+// Codex capacity, unless a role profile opts into admission with a Quota.
 type AgyCapacityState string
 
 // Agy capacity states classify the provider-reported overall bucket.

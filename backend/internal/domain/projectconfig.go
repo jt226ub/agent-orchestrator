@@ -201,6 +201,28 @@ type RoleProfile struct {
 	// Env are extra environment variables for sessions on this profile; a key
 	// set here wins over the project's Env, and AO-internal vars still win over both.
 	Env map[string]string `json:"env,omitempty"`
+	// Quota gates spawns on the harness's plan capacity (today: Antigravity's
+	// shared Gemini meter). Nil means capacity is advisory for this profile.
+	Quota *ProfileQuota `json:"quota,omitempty"`
+	// Fallback names the profile a spawn uses instead when Quota refuses this
+	// one, so a plan that is out of capacity hands the task to another arm.
+	Fallback *ProfileFallback `json:"fallback,omitempty"`
+}
+
+// ProfileQuota is a profile's admission policy against the fresh capacity
+// snapshot: at or below RefuseBelowPercent remaining the spawn is refused (or
+// handed to the Fallback profile); at or below WarnBelowPercent it proceeds
+// with a warning. Zero WarnBelowPercent never warns; zero RefuseBelowPercent
+// refuses only an exhausted plan.
+type ProfileQuota struct {
+	WarnBelowPercent   float64 `json:"warnBelowPercent,omitempty" minimum:"0" maximum:"100"`
+	RefuseBelowPercent float64 `json:"refuseBelowPercent,omitempty" minimum:"0" maximum:"100"`
+}
+
+// ProfileFallback names the profile that takes a spawn this profile's Quota
+// refuses. One hop: the fallback's own Quota is checked, but not its fallback.
+type ProfileFallback struct {
+	Profile string `json:"profile,omitempty"`
 }
 
 // ResolveProfileName picks the profile a spawn of the given kind uses: the
@@ -422,6 +444,28 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := validateRepoRelative(profile.RulesFile); err != nil {
 			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
+		}
+		if q := profile.Quota; q != nil {
+			for field, value := range map[string]float64{"warnBelowPercent": q.WarnBelowPercent, "refuseBelowPercent": q.RefuseBelowPercent} {
+				if value < 0 || value > 100 {
+					return fmt.Errorf("profiles.%s.quota.%s: %v is not between 0 and 100", name, field, value)
+				}
+			}
+			if q.WarnBelowPercent > 0 && q.RefuseBelowPercent > q.WarnBelowPercent {
+				return fmt.Errorf("profiles.%s.quota: refuseBelowPercent %v is above warnBelowPercent %v", name, q.RefuseBelowPercent, q.WarnBelowPercent)
+			}
+		}
+		if fb := profile.Fallback; fb != nil && strings.TrimSpace(fb.Profile) != "" {
+			target := strings.TrimSpace(fb.Profile)
+			if profile.Quota == nil {
+				return fmt.Errorf("profiles.%s.fallback: set quota for a fallback to apply", name)
+			}
+			if target == name {
+				return fmt.Errorf("profiles.%s.fallback: a profile cannot fall back to itself", name)
+			}
+			if _, ok := c.Profiles[target]; !ok {
+				return fmt.Errorf("profiles.%s.fallback.profile: unknown profile %q", name, target)
+			}
 		}
 	}
 	for name, tpl := range c.Templates {

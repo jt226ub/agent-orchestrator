@@ -4788,6 +4788,136 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 }
 
+type fakeAgyCapacity struct {
+	remaining *float64
+	err       error
+	calls     int
+}
+
+func (f *fakeAgyCapacity) EnsureAgyCapacity(context.Context, bool) (domain.AgyCapacitySnapshot, error) {
+	f.calls++
+	if f.err != nil {
+		return domain.AgyCapacitySnapshot{}, f.err
+	}
+	return domain.AgyCapacitySnapshot{State: domain.AgyCapacityAvailable, RemainingPercent: f.remaining}, nil
+}
+
+func TestSpawnWorker_ProfileQuotaAdmission(t *testing.T) {
+	pct := func(v float64) *float64 { return &v }
+	cfg := testRoleAgents()
+	cfg.Worker = domain.RoleOverride{Harness: domain.HarnessClaudeCode, Profile: "flash-coder"}
+	cfg.Profiles = map[string]domain.RoleProfile{
+		"flash-coder": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.8-flash-high"}, Quota: &domain.ProfileQuota{WarnBelowPercent: 20, RefuseBelowPercent: 5}, Fallback: &domain.ProfileFallback{Profile: "paid-expert"}},
+		"no-fallback": {Harness: domain.HarnessAgy, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}},
+		"paid-expert": {Harness: domain.HarnessClaudeCode, AgentConfig: domain.AgentConfig{Model: "opus"}},
+		"paid-gated":  {Harness: domain.HarnessAgy, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}, Fallback: &domain.ProfileFallback{Profile: "paid-expert"}},
+		"chained":     {Harness: domain.HarnessAgy, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}, Fallback: &domain.ProfileFallback{Profile: "paid-gated"}},
+		"other-tool":  {Harness: domain.HarnessCodex, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}},
+	}
+	newManager := func(t *testing.T, capacity *fakeAgyCapacity) (*Manager, *fakeStore, *recordingAgent, *bytes.Buffer) {
+		t.Helper()
+		st := newFakeStore()
+		st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+		agent := &recordingAgent{}
+		var logBuf bytes.Buffer
+		m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }, Logger: slog.New(slog.NewTextHandler(&logBuf, nil))})
+		if capacity != nil {
+			m.SetAgyCapacity(capacity)
+		}
+		return m, st, agent, &logBuf
+	}
+
+	t.Run("plenty of capacity spawns the profile quietly", func(t *testing.T) {
+		capacity := &fakeAgyCapacity{remaining: pct(60)}
+		m, _, agent, logBuf := newManager(t, capacity)
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Harness != domain.HarnessAgy || rec.Metadata.Profile != "flash-coder" || agent.lastLaunch.Config.Model != "gemini-3.8-flash-high" || capacity.calls != 1 {
+			t.Fatalf("record = %s/%s model %q calls %d", rec.Harness, rec.Metadata.Profile, agent.lastLaunch.Config.Model, capacity.calls)
+		}
+		if strings.Contains(logBuf.String(), "profile quota") {
+			t.Fatalf("no quota log expected:\n%s", logBuf.String())
+		}
+	})
+	t.Run("low capacity warns and proceeds", func(t *testing.T) {
+		m, _, _, logBuf := newManager(t, &fakeAgyCapacity{remaining: pct(12)})
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		if err != nil || rec.Metadata.Profile != "flash-coder" {
+			t.Fatalf("record = %#v err %v", rec.Metadata, err)
+		}
+		if !strings.Contains(logBuf.String(), "profile quota low") || !strings.Contains(logBuf.String(), "remaining_percent=12") {
+			t.Fatalf("expected a low-quota warning:\n%s", logBuf.String())
+		}
+	})
+	t.Run("exhausted capacity hands the spawn to the fallback profile", func(t *testing.T) {
+		m, _, agent, logBuf := newManager(t, &fakeAgyCapacity{remaining: pct(5)})
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The fallback folds over the project config, not over the refused profile.
+		if rec.Harness != domain.HarnessClaudeCode || rec.Metadata.Profile != "paid-expert" || agent.lastLaunch.Config.Model != "opus" {
+			t.Fatalf("record = %s/%s model %q, want the fallback profile", rec.Harness, rec.Metadata.Profile, agent.lastLaunch.Config.Model)
+		}
+		if !strings.Contains(logBuf.String(), "falling back") {
+			t.Fatalf("expected a fallback log:\n%s", logBuf.String())
+		}
+	})
+	t.Run("exhausted capacity without a fallback refuses before any durable state", func(t *testing.T) {
+		m, st, _, _ := newManager(t, &fakeAgyCapacity{remaining: pct(0)})
+		before := len(st.sessions)
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "no-fallback"})
+		if !errors.Is(err, ErrSpawnQuota) || !strings.Contains(err.Error(), `"no-fallback"`) || !strings.Contains(err.Error(), "0%") {
+			t.Fatalf("err = %v, want ErrSpawnQuota naming the profile", err)
+		}
+		if len(st.sessions) != before {
+			t.Fatalf("a refused spawn left %d session rows", len(st.sessions)-before)
+		}
+	})
+	t.Run("a gated fallback is checked once and its own fallback is not followed", func(t *testing.T) {
+		capacity := &fakeAgyCapacity{remaining: pct(0)}
+		m, _, _, _ := newManager(t, capacity)
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "chained"})
+		if !errors.Is(err, ErrSpawnQuota) || !strings.Contains(err.Error(), `"paid-gated"`) || capacity.calls != 2 {
+			t.Fatalf("err = %v calls %d, want the fallback refused after one hop", err, capacity.calls)
+		}
+	})
+	t.Run("an explicit non-agy harness is not gated", func(t *testing.T) {
+		capacity := &fakeAgyCapacity{remaining: pct(0)}
+		m, _, _, _ := newManager(t, capacity)
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex})
+		if err != nil || rec.Harness != domain.HarnessCodex || capacity.calls != 0 {
+			t.Fatalf("record = %#v err %v calls %d", rec.Harness, err, capacity.calls)
+		}
+	})
+	t.Run("a profile on another harness is not gated", func(t *testing.T) {
+		capacity := &fakeAgyCapacity{remaining: pct(0)}
+		m, _, _, _ := newManager(t, capacity)
+		if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "other-tool"}); err != nil || capacity.calls != 0 {
+			t.Fatalf("err %v calls %d", err, capacity.calls)
+		}
+	})
+	t.Run("an unreadable snapshot leaves capacity advisory", func(t *testing.T) {
+		m, _, _, logBuf := newManager(t, &fakeAgyCapacity{err: errors.New("agy: not installed")})
+		rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		if err != nil || rec.Metadata.Profile != "flash-coder" || !strings.Contains(logBuf.String(), "quota unchecked") {
+			t.Fatalf("record %#v err %v log:\n%s", rec.Metadata, err, logBuf.String())
+		}
+		m, _, _, _ = newManager(t, &fakeAgyCapacity{})
+		if rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil || rec.Metadata.Profile != "flash-coder" {
+			t.Fatalf("windowless snapshot: %#v err %v", rec.Metadata, err)
+		}
+	})
+	t.Run("no capacity provider means no gate", func(t *testing.T) {
+		m, _, _, _ := newManager(t, nil)
+		if rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "no-fallback"}); err != nil || rec.Metadata.Profile != "no-fallback" {
+			t.Fatalf("record %#v err %v", rec.Metadata, err)
+		}
+	})
+}
+
 func TestSpawnOrchestrator_TemplatePlanLayersLast(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projectDir, "rules"), 0o755); err != nil {

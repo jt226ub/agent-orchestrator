@@ -3355,6 +3355,15 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainProfileFallback: {
+            profile?: string;
+        };
+        DomainProfileQuota: {
+            /** Format: double */
+            refuseBelowPercent?: number;
+            /** Format: double */
+            warnBelowPercent?: number;
+        };
         DomainReviewerConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
@@ -3956,6 +3965,8 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            fallback?: components["schemas"]["DomainProfileFallback"];
+            quota?: components["schemas"]["DomainProfileQuota"];
             rulesFile?: string;
         };
         RollbackConversationResponse: {

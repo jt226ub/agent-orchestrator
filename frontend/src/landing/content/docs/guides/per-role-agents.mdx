@@ -65,6 +65,26 @@ A profile is a named bundle a role or a single spawn can name instead of repeati
 
 The session remembers its profile, so a restore folds the same bundle back in. Standing rules are layered general to specific: the daemon's operating contract when `<data dir>/rules/contract.md` exists, the project's rules, then the profile's rules file. A reviewer entry can name a profile too (`"reviewers": [{ "harness": "agy", "profile": "pro-expert" }]`); the profile's harness and agent config are read at review time, so editing the profile reaches the next review.
 
+## Quota admission
+
+A profile on Antigravity (`agy`) can gate spawns on the plan's remaining capacity, which every Gemini model on the plan shares:
+
+```json
+{
+  "profiles": {
+    "flash-coder": {
+      "agent": "agy",
+      "agentConfig": { "model": "gemini-3.8-flash-high" },
+      "quota": { "warnBelowPercent": 20, "refuseBelowPercent": 0 },
+      "fallback": { "profile": "paid-expert" }
+    },
+    "paid-expert": { "agent": "claude-code" }
+  }
+}
+```
+
+At spawn the daemon reads the capacity snapshot (cached for two minutes, the worse of the 5-hour and weekly windows). At or below `warnBelowPercent` the spawn proceeds and the daemon logs a warning; at or below `refuseBelowPercent` the task goes to the `fallback` profile instead (checked once against its own quota, its fallback not followed), or the spawn fails with `SPAWN_QUOTA_EXHAUSTED` when there is none. Explicit `--agent` on another harness is never gated, and an unreadable snapshot leaves capacity advisory rather than blocking work.
+
 ## Workflow templates
 
 A template names which profile fills each role slot, plus the orchestrator's delegation plan, so "Flash implements, Pro reviews" is one switch rather than three edits. Define templates under `templates` and bind one with `ao project apply-template <project-id> <name>` (or the Templates tab in project settings): the worker and orchestrator slots take the template's profiles, the reviewer list is replaced by its reviewer profiles, and `template` records which one is active. A template never changes a profile.

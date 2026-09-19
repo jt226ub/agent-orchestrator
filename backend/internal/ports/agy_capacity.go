@@ -23,6 +23,13 @@ type AgyCapacityObservation struct {
 	ObservedAt        time.Time
 }
 
+// AgyCapacityProvider is the daemon-owned capacity coordinator as the session
+// manager sees it for profile quota admission: a display-fresh snapshot,
+// read from the CLI only when the cache is stale.
+type AgyCapacityProvider interface {
+	EnsureAgyCapacity(ctx context.Context, force bool) (domain.AgyCapacitySnapshot, error)
+}
+
 // AgyCapacityReader is implemented by the Agy adapter: it asks the installed
 // Antigravity CLI for the signed-in account's plan limits.
 type AgyCapacityReader interface {

@@ -50,6 +50,10 @@ var (
 	ErrMissingHarness = errors.New("session: agent harness required")
 	// ErrHarnessInstallActive prevents launch while the harness executable is replaced.
 	ErrHarnessInstallActive = errors.New("session: harness install active")
+	// ErrSpawnQuota means the role profile's quota policy refused the spawn
+	// because the harness's plan is at or below the profile's refuse threshold
+	// and no fallback profile took it. The API maps it to a 409.
+	ErrSpawnQuota = errors.New("session: profile quota exhausted")
 	// ErrUnsupportedModel means the requested model is not supported by the
 	// selected harness's catalog and the harness does not accept arbitrary model
 	// ids. The API maps it to a 400.
@@ -378,6 +382,9 @@ type Manager struct {
 	agentSwitchReporting ports.AgentSwitchReportingPolicy
 	daemonRunID          string
 	agentReadiness       ports.AgentReadinessProvider
+	// agyCapacity answers profile quota admission for Antigravity spawns. Nil
+	// leaves every profile's quota unenforced (focused tests, other builds).
+	agyCapacity ports.AgyCapacityProvider
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -551,6 +558,11 @@ func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
 // SetAgentReadiness completes daemon wiring before request handling begins.
 func (m *Manager) SetAgentReadiness(provider ports.AgentReadinessProvider) {
 	m.agentReadiness = provider
+}
+
+// SetAgyCapacity completes daemon wiring for profile quota admission.
+func (m *Manager) SetAgyCapacity(provider ports.AgyCapacityProvider) {
+	m.agyCapacity = provider
 }
 
 func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
@@ -836,6 +848,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// and rules below all see the profile's settings. The name is persisted on
 	// the session so restore folds the same profile back in.
 	cfg.Profile = project.Config.ResolveProfileName(cfg.Kind, cfg.Profile)
+	if cfg.Profile, err = m.admitProfileQuota(ctx, cfg, project.Config); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	}
 	if project.Config, err = project.Config.WithProfile(cfg.Kind, cfg.Profile); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
@@ -1539,6 +1554,56 @@ func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.Se
 	if err := m.store.UpdateSession(ctx, rec); err != nil {
 		m.logger.Warn("spawn rollback: failed to record preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
 	}
+}
+
+// admitProfileQuota applies the named profile's quota policy and returns the
+// profile the spawn proceeds with: the same one, its fallback when the plan is
+// at or below the refuse threshold, or ErrSpawnQuota when nothing can take the
+// task. Only Antigravity spawns are gated (the one harness with a capacity
+// reader); an unreadable or windowless snapshot leaves capacity advisory, as
+// upstream's Codex capacity is, rather than blocking work on a failed read.
+// The fallback's own quota is checked once; its fallback is not followed.
+func (m *Manager) admitProfileQuota(ctx context.Context, cfg ports.SpawnConfig, projectCfg domain.ProjectConfig) (string, error) {
+	name := cfg.Profile
+	for hop := 0; hop < 2; hop++ {
+		profile, ok := projectCfg.Profiles[name]
+		if !ok || profile.Quota == nil || m.agyCapacity == nil {
+			return name, nil
+		}
+		harness := cfg.Harness
+		if harness == "" {
+			harness = profile.Harness
+		}
+		if harness == "" {
+			harness = roleOverride(cfg.Kind, projectCfg).Harness
+		}
+		if harness != domain.HarnessAgy {
+			return name, nil
+		}
+		snapshot, err := m.agyCapacity.EnsureAgyCapacity(ctx, false)
+		if err != nil {
+			m.logger.Warn("spawn: profile quota unchecked; capacity read failed", "profile", name, "error", err)
+			return name, nil
+		}
+		if snapshot.RemainingPercent == nil {
+			m.logger.Warn("spawn: profile quota unchecked; no capacity window", "profile", name, "reason", snapshot.ReasonCode)
+			return name, nil
+		}
+		remaining := *snapshot.RemainingPercent
+		if remaining > profile.Quota.RefuseBelowPercent {
+			if profile.Quota.WarnBelowPercent > 0 && remaining <= profile.Quota.WarnBelowPercent {
+				m.logger.Warn("spawn: profile quota low", "profile", name, "remaining_percent", remaining, "warn_below_percent", profile.Quota.WarnBelowPercent, "resets_at", snapshot.ResetsAt)
+			}
+			return name, nil
+		}
+		if hop == 0 && profile.Fallback != nil && strings.TrimSpace(profile.Fallback.Profile) != "" {
+			m.logger.Warn("spawn: profile quota refused; falling back", "profile", name, "fallback", profile.Fallback.Profile, "remaining_percent", remaining, "refuse_below_percent", profile.Quota.RefuseBelowPercent)
+			name = strings.TrimSpace(profile.Fallback.Profile)
+			continue
+		}
+		return "", fmt.Errorf("%w: profile %q has %.0f%% of its Antigravity plan left, at or below its refuse threshold of %.0f%%", ErrSpawnQuota, name, remaining, profile.Quota.RefuseBelowPercent)
+	}
+	return name, nil
 }
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;

@@ -714,6 +714,70 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
+	it("edits an agy profile's quota and fallback and keeps them through save", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				profiles: {
+					"flash-coder": { agent: "agy", quota: { warnBelowPercent: 20, refuseBelowPercent: 5 }, fallback: { profile: "paid" } },
+					paid: { agent: "claude-code" },
+				},
+			},
+		});
+
+		renderSettings("proj-1", undefined, "profiles");
+
+		expect(await screen.findByLabelText("Warn threshold for profile flash-coder")).toHaveValue("20");
+		expect(screen.getByLabelText("Refuse threshold for profile flash-coder")).toHaveValue("5");
+		expect(screen.getByRole("button", { name: "Fallback profile for profile flash-coder" })).toHaveTextContent("paid");
+		// Quota controls are an Antigravity concern; other profiles do not show them.
+		expect(screen.queryByLabelText("Warn threshold for profile paid")).not.toBeInTheDocument();
+
+		const refuse = screen.getByLabelText("Refuse threshold for profile flash-coder");
+		await userEvent.clear(refuse);
+		await userEvent.type(refuse, "10");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: expect.objectContaining({
+					profiles: {
+						"flash-coder": { agent: "agy", quota: { warnBelowPercent: 20, refuseBelowPercent: 10 }, fallback: { profile: "paid" } },
+						paid: { agent: "claude-code" },
+					},
+				}),
+			},
+		});
+	}, 20_000);
+
+	it("refuses an out-of-range quota threshold before saving", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" }, profiles: { "flash-coder": { agent: "agy" } } },
+		});
+
+		renderSettings("proj-1", undefined, "profiles");
+		await userEvent.type(await screen.findByLabelText("Warn threshold for profile flash-coder"), "150");
+		submitSettings();
+		expect(await screen.findByText("Profile flash-coder: quota thresholds must be numbers between 0 and 100.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
 	it("refuses duplicate profile names before saving", async () => {
 		mockProject({
 			id: "proj-1",
