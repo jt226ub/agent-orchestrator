@@ -4392,6 +4392,87 @@ func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 	}
 }
 
+func TestSpawnWorker_RoleProfileFoldsIntoSpawn(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "rules", "flash.md"), []byte("Profile rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docs.md"), []byte("File rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(ContractRulesPath(dataDir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ContractRulesPath(dataDir), []byte("# Contract\n\nVerify before you claim.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testRoleAgents()
+	cfg.Env = map[string]string{"SHARED": "project", "KEEP": "project"}
+	cfg.AgentRules = "Inline rule."
+	cfg.AgentRulesFile = "docs.md"
+	cfg.Worker = domain.RoleOverride{Harness: domain.HarnessClaudeCode, AgentConfig: domain.AgentConfig{Model: "slot-model"}, Profile: "flash-coder"}
+	cfg.Profiles = map[string]domain.RoleProfile{
+		"flash-coder": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.8-flash-high"}, RulesFile: "rules/flash.md", Env: map[string]string{"SHARED": "profile", "AO_PROFILE_HINT": "flash"}},
+		"pro-expert":  {AgentConfig: domain.AgentConfig{Model: "gemini-3.1-pro-high"}},
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectDir, Config: cfg}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, DataDir: dataDir})
+
+	// No explicit harness or profile: the worker override's profile applies.
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Harness != domain.HarnessAgy || rec.Metadata.Profile != "flash-coder" {
+		t.Fatalf("record = harness %q profile %q (stored %q), want agy / flash-coder", rec.Harness, rec.Metadata.Profile, st.sessions[rec.ID].Metadata.Profile)
+	}
+	if agent.lastLaunch.Config.Model != "gemini-3.8-flash-high" {
+		t.Fatalf("launch model = %q, want the profile's", agent.lastLaunch.Config.Model)
+	}
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	order := []string{"Verify before you claim.", "Inline rule.", "File rule.", "Profile rule."}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(systemPrompt, want)
+		if at < 0 || at < last {
+			t.Fatalf("rules not layered contract, project, file, profile (missing or misplaced %q):\n%s", want, systemPrompt)
+		}
+		last = at
+	}
+	if rt.lastCfg.Env["SHARED"] != "profile" || rt.lastCfg.Env["KEEP"] != "project" || rt.lastCfg.Env["AO_PROFILE_HINT"] != "flash" {
+		t.Fatalf("runtime env = %#v, want the profile's keys merged over the project's", rt.lastCfg.Env)
+	}
+
+	// An explicit profile and an explicit harness both beat the override.
+	rec, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "pro-expert", Harness: domain.HarnessCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Harness != domain.HarnessCodex || rec.Metadata.Profile != "pro-expert" {
+		t.Fatalf("record = harness %q profile %q, want codex / pro-expert", rec.Harness, rec.Metadata.Profile)
+	}
+	if strings.Contains(agent.lastLaunch.SystemPrompt, "Profile rule.") {
+		t.Fatalf("pro-expert has no rules file, yet the flash rules leaked in:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+
+	// An unknown profile fails before any durable state exists.
+	before := len(st.sessions)
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Profile: "missing"}); err == nil || !strings.Contains(err.Error(), `profile "missing"`) {
+		t.Fatalf("unknown profile err = %v", err)
+	}
+	if len(st.sessions) != before {
+		t.Fatalf("unknown profile left a session row: %d -> %d", before, len(st.sessions))
+	}
+}
+
 func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
@@ -4798,7 +4879,7 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 			lookPath := func(string) (string, error) { return "/bin/true", nil }
 			m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-			sp, err := m.buildSystemPrompt(ctx, tc.kind, "mer")
+			sp, err := m.buildSystemPrompt(ctx, tc.kind, "mer", "")
 			if err != nil {
 				t.Fatalf("buildSystemPrompt: %v", err)
 			}

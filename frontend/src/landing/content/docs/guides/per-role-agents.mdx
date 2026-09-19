@@ -40,6 +40,31 @@ For a full configuration replacement, the stored JSON shape is:
 }
 ```
 
+## Role profiles
+
+A profile is a named bundle a role or a single spawn can name instead of repeating the harness, agent config, rules and environment. Define profiles under `profiles`, point a role at one with `worker.profile` or `orchestrator.profile`, and pick one per spawn with `ao spawn --profile <name>`; `--agent` and `--model` still override what the profile sets. A profile's set fields win over the role override's inline ones; its `rulesFile` is appended after the project rules; its `env` keys win over the project's.
+
+```json
+{
+  "worker": { "profile": "flash-coder" },
+  "orchestrator": { "agent": "claude-code" },
+  "profiles": {
+    "flash-coder": {
+      "agent": "agy",
+      "agentConfig": { "model": "gemini-3.8-flash-high", "permissions": "bypass-permissions" },
+      "rulesFile": "rules/flash-coder.md"
+    },
+    "pro-expert": {
+      "agent": "agy",
+      "agentConfig": { "model": "gemini-3.1-pro-high", "permissions": "bypass-permissions" },
+      "rulesFile": "rules/pro-expert.md"
+    }
+  }
+}
+```
+
+The session remembers its profile, so a restore folds the same bundle back in. Standing rules are layered general to specific: the daemon's operating contract when `<data dir>/rules/contract.md` exists, the project's rules, then the profile's rules file.
+
 Pass the object itself with `ao project set-config <project-id> --config-json '<json-object>'`; the flag does not read a file. This replaces the project config, so preserve any existing setup, rules, reviewers, or intake fields.
 
 ## Start an orchestrator or worker

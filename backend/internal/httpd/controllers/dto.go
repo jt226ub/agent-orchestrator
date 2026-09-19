@@ -305,6 +305,10 @@ type SpawnSessionRequest struct {
 	// keeps the resolved project/role default. The daemon validates that the
 	// selected harness can honor the model before launching.
 	Model string `json:"model,omitempty" maxLength:"256"`
+	// Profile names a project role profile for this spawn. Empty uses the role
+	// override's profile when the project names one. Explicit harness and model
+	// values still override what the profile sets.
+	Profile string `json:"profile,omitempty" maxLength:"64"`
 
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task

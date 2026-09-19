@@ -184,7 +184,7 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: target config: %w", id, err)
 	}
 
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: system prompt: %w", id, err)
 	}
@@ -617,7 +617,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	if !ok {
 		return ErrUnknownHarness
 	}
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return err
 	}
@@ -739,7 +739,7 @@ func (m *Manager) recoverActivatedChatAgentSwitch(
 	}
 	if !m.chat.HasLiveChatController(rec.ID) {
 		recorder.boundary(domain.AgentSwitchFailureRecoveryActivation)
-		project, err := m.loadProject(ctx, rec.ProjectID)
+		project, err := m.loadSessionProject(ctx, rec)
 		if err != nil {
 			return false, fmt.Errorf("reconcile Chat agent switch %s: target project: %w", sw.ID, err)
 		}

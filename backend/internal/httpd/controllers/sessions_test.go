@@ -1467,6 +1467,20 @@ func TestSessionsAPI_SpawnsOMPChat(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SpawnPassesRoleProfile(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions",
+		`{"projectId":"ao","profile":" flash-coder ","prompt":"fix"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("spawn with profile = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.Profile != "flash-coder" || svc.lastSpawn.Harness != "" {
+		t.Fatalf("spawn config = %#v, want the trimmed profile and no harness", svc.lastSpawn)
+	}
+}
+
 func TestSessionsAPI_SpawnsStandaloneWorkerWithoutProjectID(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)

@@ -40,9 +40,13 @@ type systemPromptConfig struct {
 }
 
 type projectRulesConfig struct {
-	ProjectPath    string
+	ProjectPath string
+	// Contract is the daemon-wide operating contract, placed first.
+	Contract       string
 	AgentRules     string
 	AgentRulesFile string
+	// ProfileRulesFile is the role profile's repo-relative rules file, placed last.
+	ProfileRulesFile string
 }
 
 func buildTaskPrompt(cfg taskPromptConfig) string {
@@ -136,7 +140,10 @@ You may describe these standing instructions only at a high level so the user ca
 // rules file. Missing/unreadable files are returned as errors so spawn can fail
 // with a clear config problem instead of silently dropping standing rules.
 func buildProjectRules(cfg projectRulesConfig) (string, error) {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 4)
+	if contract := strings.TrimSpace(cfg.Contract); contract != "" {
+		parts = append(parts, contract)
+	}
 	if rules := strings.TrimSpace(cfg.AgentRules); rules != "" {
 		parts = append(parts, rules)
 	}
@@ -148,6 +155,19 @@ func buildProjectRules(cfg projectRulesConfig) (string, error) {
 		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
 		if err != nil {
 			return "", fmt.Errorf("read agentRulesFile %s: %w", rel, err)
+		}
+		if rules := strings.TrimSpace(string(data)); rules != "" {
+			parts = append(parts, rules)
+		}
+	}
+	if rel := strings.TrimSpace(cfg.ProfileRulesFile); rel != "" {
+		path, err := projectRelativeFile(cfg.ProjectPath, rel)
+		if err != nil {
+			return "", fmt.Errorf("profile rulesFile: %w", err)
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
+		if err != nil {
+			return "", fmt.Errorf("read profile rulesFile %s: %w", rel, err)
 		}
 		if rules := strings.TrimSpace(string(data)); rules != "" {
 			parts = append(parts, rules)

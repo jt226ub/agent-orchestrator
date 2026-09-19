@@ -10639,6 +10639,10 @@ components:
           items:
             type: string
           type: array
+        profiles:
+          additionalProperties:
+            $ref: '#/components/schemas/RoleProfile'
+          type: object
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
@@ -11031,6 +11035,21 @@ components:
           type: string
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
+        profile:
+          type: string
+      type: object
+    RoleProfile:
+      properties:
+        agent:
+          type: string
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        rulesFile:
+          type: string
       type: object
     RollbackConversationResponse:
       properties:
@@ -11936,6 +11955,9 @@ components:
           maxLength: 256
           type: string
         parentSessionId:
+          type: string
+        profile:
+          maxLength: 64
           type: string
         projectId:
           type: string

@@ -33,8 +33,13 @@ type SpawnConfig struct {
 	IssueContext string
 	Kind         domain.SessionKind
 	Harness      domain.AgentHarness
-	Branch       string
-	Prompt       string
+	// Profile names a project role profile (ProjectConfig.Profiles) for this
+	// spawn. Empty uses the role override's profile when it names one. The
+	// daemon folds the profile into the project config before resolving the
+	// harness, agent config, environment and standing rules.
+	Profile string
+	Branch  string
+	Prompt  string
 	// AgentConfig overrides the resolved project/role agent config for this
 	// single spawn. Empty fields keep the project defaults.
 	AgentConfig AgentConfig

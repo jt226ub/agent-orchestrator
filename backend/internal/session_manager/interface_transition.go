@@ -757,7 +757,7 @@ func (m *Manager) persistedNativeConversationID(
 	if !ok {
 		return id, nil
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return "", err
 	}
@@ -791,7 +791,7 @@ func (m *Manager) preflightInterfaceTarget(
 		if m.chat == nil {
 			return ports.ErrChatUnsupported
 		}
-		project, err := m.loadProject(ctx, rec.ProjectID)
+		project, err := m.loadSessionProject(ctx, rec)
 		if err != nil {
 			return err
 		}
@@ -802,11 +802,11 @@ func (m *Manager) preflightInterfaceTarget(
 	if !ok {
 		return ErrUnknownHarness
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return err
 	}
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return err
 	}
@@ -1159,7 +1159,7 @@ func (m *Manager) startTransitionTarget(
 	if !ok {
 		return ErrNotFound
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return err
 	}

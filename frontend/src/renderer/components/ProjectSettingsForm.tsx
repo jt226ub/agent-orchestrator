@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import { Info, Pencil } from "lucide-react";
+import { Copy, Info, Pencil, Plus, Trash2 } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
@@ -35,12 +35,26 @@ import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
+type RoleProfile = components["schemas"]["RoleProfile"];
+
+// A profile as edited on the Profiles tab: one card per entry, env as KEY=VALUE lines.
+type ProfileDraft = {
+	key: string;
+	name: string;
+	agent: string;
+	model: string;
+	permissions: string;
+	rulesFile: string;
+	env: string;
+};
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 const DEFAULT_BRANCH_AUTO = "auto";
@@ -54,7 +68,7 @@ type SettingsSaveResult = {
 	spawnError: unknown;
 };
 
-export type ProjectSettingsSection = "general" | "agents" | "workflow" | "intake";
+export type ProjectSettingsSection = "general" | "agents" | "profiles" | "workflow" | "intake";
 export type ProjectSettingsSaveState = {
 	phase: "idle" | "pending" | "saving" | "saved" | "failed";
 	error?: string;
@@ -141,6 +155,9 @@ function SettingsBody({
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
+		workerProfile: config.worker?.profile ?? "",
+		orchestratorProfile: config.orchestrator?.profile ?? "",
+		profiles: profileDraftsFromConfig(config.profiles),
 		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
 		workerEffort: config.worker?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
 		workerPermissions: config.worker?.agentConfig?.permissions ?? config.agentConfig?.permissions ?? "",
@@ -164,13 +181,20 @@ function SettingsBody({
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [tuningValidity, setTuningValidity] = useState({ worker: true, orchestrator: true, reviewer: true });
-	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	// A role profile supplies the harness when the role names none, so a
+	// profile-driven role is not "missing" an agent (the daemon folds the
+	// profile the same way at spawn).
+	const profileAgentFor = (name: string) => form.profiles.find((p) => p.name.trim() === name.trim())?.agent ?? "";
+	const effectiveWorkerAgent = form.workerAgent || profileAgentFor(form.workerProfile);
+	const effectiveOrchestratorAgent = form.orchestratorAgent || profileAgentFor(form.orchestratorProfile);
+	const initialOrchestratorAgent =
+		config.orchestrator?.agent || config.profiles?.[config.orchestrator?.profile ?? ""]?.agent || "";
+	const missingRequiredAgent = effectiveWorkerAgent === "" || effectiveOrchestratorAgent === "";
 	const agentsQuery = useAgentReadinessQuery();
 	useEnsureAgentReadiness();
 	useEnsureAgentReadiness({
-		agentIds: [form.workerAgent, form.orchestratorAgent, form.reviewerHarness],
-		enabled: form.workerAgent !== "" || form.orchestratorAgent !== "" || form.reviewerHarness !== "",
+		agentIds: [effectiveWorkerAgent, effectiveOrchestratorAgent, form.reviewerHarness],
+		enabled: effectiveWorkerAgent !== "" || effectiveOrchestratorAgent !== "" || form.reviewerHarness !== "",
 	});
 	const agentCatalog = agentsQuery.data;
 
@@ -208,11 +232,13 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
+							profile: form.workerProfile || undefined,
 							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode, form.workerAgent === "codex" ? form.workerEffort : "", form.workerPermissions),
 						},
 						orchestrator: {
 							...config.orchestrator,
 							agent: form.orchestratorAgent,
+							profile: form.orchestratorProfile || undefined,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
@@ -225,6 +251,7 @@ function SettingsBody({
 							...sharedAgentConfig,
 							permissions: undefined,
 						}),
+						profiles: profilesFromDrafts(form.profiles),
 					}
 				: {
 						...config,
@@ -236,11 +263,13 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
+							profile: form.workerProfile || undefined,
 							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode, form.workerAgent === "codex" ? form.workerEffort : "", form.workerPermissions),
 						},
 						orchestrator: {
 							...config.orchestrator,
 							agent: form.orchestratorAgent,
+							profile: form.orchestratorProfile || undefined,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
@@ -253,6 +282,7 @@ function SettingsBody({
 							...sharedAgentConfig,
 							permissions: undefined,
 						}),
+						profiles: profilesFromDrafts(form.profiles),
 						reviewers: form.reviewerHarness
 							? [{
 									harness: form.reviewerHarness,
@@ -268,8 +298,8 @@ function SettingsBody({
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			if (
-				form.orchestratorAgent !== initialOrchestratorAgent ||
-				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
+				effectiveOrchestratorAgent !== initialOrchestratorAgent ||
+				(activeOrchestrator && activeOrchestrator.provider !== effectiveOrchestratorAgent)
 			) {
 				try {
 					const sessionId = await spawnOrchestrator(projectId, "settings", true);
@@ -385,7 +415,10 @@ function SettingsBody({
 				onSubmit={() => {
 				setSavedAt(null);
 				setReplacementError(null);
-				const validation = validateProjectSettings(form, { validateIntake: !isScratchProject });
+				const validation = validateProjectSettings(
+					{ ...form, workerAgent: effectiveWorkerAgent, orchestratorAgent: effectiveOrchestratorAgent },
+					{ validateIntake: !isScratchProject },
+				);
 				if (validation) {
 					setValidationError(
 						validation === "agents_required"
@@ -398,6 +431,11 @@ function SettingsBody({
 				}
 				if (!tuningValidity.worker || !tuningValidity.orchestrator || !tuningValidity.reviewer) {
 					setValidationError(t("settings.project.tuningInvalid"));
+					return;
+				}
+				const profileError = validateProfileDrafts(form.profiles, t);
+				if (profileError) {
+					setValidationError(profileError);
 					return;
 				}
 				setValidationError(null);
@@ -442,6 +480,15 @@ function SettingsBody({
 					<ProjectAgentsSettingsView
 						title={t("settings.project.agents")}
 						workerArea={
+							<>
+								<ProfileRoleRow
+									label={t("settings.project.workerProfile")}
+									value={form.workerProfile}
+									explicitAgent={form.workerAgent}
+									profiles={form.profiles}
+									agents={agentCatalog?.agents}
+									onChange={(workerProfile) => setForm((f) => ({ ...f, workerProfile }))}
+								/>
 							<RequiredAgentField
 								id="workerAgent"
 								variant="settings-row"
@@ -450,11 +497,12 @@ function SettingsBody({
 								label={t("settings.project.defaultWorker")}
 								agents={agentCatalog?.agents}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								invalid={validationError !== null && form.workerAgent === ""}
+								invalid={validationError !== null && effectiveWorkerAgent === ""}
 								onChange={(v) =>
 									setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "", workerEffort: "" }))
 								}
 							/>
+							</>
 						}
 						workerModelArea={
 							<AgentModelField
@@ -471,6 +519,15 @@ function SettingsBody({
 							/>
 						}
 						orchestratorArea={
+							<>
+								<ProfileRoleRow
+									label={t("settings.project.orchestratorProfile")}
+									value={form.orchestratorProfile}
+									explicitAgent={form.orchestratorAgent}
+									profiles={form.profiles}
+									agents={agentCatalog?.agents}
+									onChange={(orchestratorProfile) => setForm((f) => ({ ...f, orchestratorProfile }))}
+								/>
 							<RequiredAgentField
 								id="orchestratorAgent"
 								variant="settings-row"
@@ -479,7 +536,7 @@ function SettingsBody({
 								label={t("settings.project.defaultOrchestrator")}
 								agents={agentCatalog?.agents}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								invalid={validationError !== null && form.orchestratorAgent === ""}
+								invalid={validationError !== null && effectiveOrchestratorAgent === ""}
 								onChange={(v) =>
 									setForm((f) => ({
 										...f,
@@ -490,6 +547,7 @@ function SettingsBody({
 									}))
 								}
 							/>
+							</>
 						}
 						orchestratorModelArea={
 							<AgentModelField
@@ -613,6 +671,61 @@ function SettingsBody({
 				</>
 			)}
 
+			{section === "profiles" && (
+				<ProjectSettingsSection title={t("settings.project.profiles")} titleHidden grouped>
+					<p className="px-1 text-xs leading-row text-settings-muted">{t("settings.project.profilesDescription")}</p>
+					{form.profiles.length === 0 ? (
+						<p className="px-1 text-xs leading-row text-settings-muted">{t("settings.project.profilesEmpty")}</p>
+					) : null}
+					{form.profiles.map((draft) => (
+						<ProfileCard
+							key={draft.key}
+							draft={draft}
+							projectId={projectId}
+							agents={agentCatalog?.agents}
+							agentsLoading={agentsQuery.isFetching && agentCatalog === undefined}
+							onChange={(patch) =>
+								setForm((f) => ({
+									...f,
+									profiles: f.profiles.map((p) => (p.key === draft.key ? { ...p, ...patch } : p)),
+								}))
+							}
+							onDuplicate={() =>
+								setForm((f) => {
+									const at = f.profiles.findIndex((p) => p.key === draft.key);
+									const copy = { ...draft, key: newProfileKey(), name: nextProfileName(draft.name, f.profiles) };
+									return { ...f, profiles: [...f.profiles.slice(0, at + 1), copy, ...f.profiles.slice(at + 1)] };
+								})
+							}
+							onDelete={() =>
+								setForm((f) => ({
+									...f,
+									profiles: f.profiles.filter((p) => p.key !== draft.key),
+									workerProfile: f.workerProfile === draft.name.trim() ? "" : f.workerProfile,
+									orchestratorProfile: f.orchestratorProfile === draft.name.trim() ? "" : f.orchestratorProfile,
+								}))
+							}
+						/>
+					))}
+					<div className="flex justify-end px-1">
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							onClick={() =>
+								setForm((f) => ({
+									...f,
+									profiles: [...f.profiles, { key: newProfileKey(), name: nextProfileName("profile", f.profiles), agent: "", model: "", permissions: "", rulesFile: "", env: "" }],
+								}))
+							}
+						>
+							<Plus className="size-3.5" aria-hidden="true" />
+							{t("settings.project.addProfile")}
+						</Button>
+					</div>
+				</ProjectSettingsSection>
+			)}
+
 			{section === "workflow" && (
 				<>
 					{!isScratchProject ? (
@@ -677,6 +790,7 @@ function AgentModelField({
 	onModeChange,
 	onEffortChange,
 	onValidityChange,
+	labelOverride,
 }: {
 	role: "worker" | "orchestrator" | "reviewer";
 	agentId: string;
@@ -688,6 +802,8 @@ function AgentModelField({
 	onModeChange: (value: string) => void;
 	onEffortChange: (value: string) => void;
 	onValidityChange: (valid: boolean) => void;
+	/** Replaces the role-derived row label, e.g. for a profile card. */
+	labelOverride?: string;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -706,7 +822,7 @@ function AgentModelField({
 		}
 	}, [agentId, projectId, queryClient, revalidationQuery.data]);
 	const isMode = catalog?.selectionMode === "mode";
-	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
+	const label = labelOverride ?? t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
 	const warning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
@@ -821,6 +937,227 @@ function PermissionModeSelect({ ariaLabel, value, onChange }: { ariaLabel: strin
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 		/>
 	);
+}
+
+function ProfileRoleRow({
+	label,
+	value,
+	explicitAgent,
+	profiles,
+	agents,
+	onChange,
+}: {
+	label: string;
+	value: string;
+	explicitAgent: string;
+	profiles: ProfileDraft[];
+	agents?: components["schemas"]["AgentReadinessSnapshot"][];
+	onChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const names = profiles.map((p) => p.name.trim()).filter((name) => name !== "");
+	const options = [
+		{ value: "__none__", label: t("settings.project.profileNone") },
+		...names.map((name) => ({ value: name, label: name })),
+		...(value && !names.includes(value) ? [{ value, label: value }] : []),
+	];
+	const selected = profiles.find((p) => p.name.trim() === value.trim());
+	const agentLabel = selected?.agent ? (agents?.find((a) => a.id === selected.agent)?.label ?? selected.agent) : "";
+	const hint =
+		selected && explicitAgent === "" && (agentLabel || selected.model)
+			? selected.model
+				? t("settings.project.profileEffective", { agent: agentLabel || t("settings.project.default"), model: selected.model })
+				: t("settings.project.profileEffectiveAgent", { agent: agentLabel })
+			: null;
+	return (
+		<>
+			<SettingsRow label={label}>
+				<SettingsOptionMenu
+					aria-label={label}
+					value={value || "__none__"}
+					options={options}
+					onChange={(v) => onChange(v === "__none__" ? "" : v)}
+				/>
+			</SettingsRow>
+			{hint ? <p className="px-1 text-xs leading-row text-settings-muted">{hint}</p> : null}
+		</>
+	);
+}
+
+function ProfileCard({
+	draft,
+	projectId,
+	agents,
+	agentsLoading,
+	onChange,
+	onDuplicate,
+	onDelete,
+}: {
+	draft: ProfileDraft;
+	projectId: string;
+	agents?: components["schemas"]["AgentReadinessSnapshot"][];
+	agentsLoading: boolean;
+	onChange: (patch: Partial<ProfileDraft>) => void;
+	onDuplicate: () => void;
+	onDelete: () => void;
+}) {
+	const { t } = useTranslation();
+	const name = draft.name.trim() || t("settings.project.profileUnnamed");
+	return (
+		<div className="flex flex-col gap-1 rounded-md border border-border/70 px-2 py-2" data-testid="profile-card">
+			<div className="flex items-center justify-between gap-2 px-1">
+				<span className="text-sm font-medium text-foreground">{name}</span>
+				<div className="flex items-center gap-1">
+					<Button type="button" size="sm" variant="ghost" aria-label={t("settings.project.duplicateProfile", { name })} onClick={onDuplicate}>
+						<Copy className="size-3.5" aria-hidden="true" />
+					</Button>
+					<Button type="button" size="sm" variant="ghost" aria-label={t("settings.project.deleteProfile", { name })} onClick={onDelete}>
+						<Trash2 className="size-3.5" aria-hidden="true" />
+					</Button>
+				</div>
+			</div>
+			<SettingsRow label={t("settings.project.profileName")}>
+				<Input
+					aria-label={t("settings.project.profileNameFor", { name })}
+					className="max-w-64 text-right"
+					value={draft.name}
+					onChange={(event) => onChange({ name: event.target.value })}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.project.profileAgent")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.project.profileAgentFor", { name })}
+					value={draft.agent || "__inherit__"}
+					options={[
+						{ value: "__inherit__", label: t("settings.project.profileAgentInherit") },
+						...(agents ?? []).map((agent) => ({ value: agent.id, label: agent.label })),
+						...(draft.agent && !(agents ?? []).some((agent) => agent.id === draft.agent) ? [{ value: draft.agent, label: draft.agent }] : []),
+					]}
+					disabled={agentsLoading}
+					onChange={(agent) => onChange({ agent: agent === "__inherit__" ? "" : agent, model: "" })}
+				/>
+			</SettingsRow>
+			{draft.agent ? (
+				<AgentModelField
+					role="worker"
+					agentId={draft.agent}
+					projectId={projectId}
+					model={draft.model}
+					mode=""
+					effort=""
+					labelOverride={t("settings.project.profileModel")}
+					onModelChange={(model) => onChange({ model })}
+					onModeChange={() => undefined}
+					onEffortChange={() => undefined}
+					onValidityChange={() => undefined}
+				/>
+			) : null}
+			<SettingsRow label={t("settings.project.profileApproval")}>
+				<PermissionModeSelect
+					ariaLabel={t("settings.project.profileApprovalFor", { name })}
+					value={draft.permissions}
+					onChange={(permissions) => onChange({ permissions })}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.project.profileRulesFile")} description={t("settings.project.profileRulesFileHint")}>
+				<Input
+					aria-label={t("settings.project.profileRulesFileFor", { name })}
+					className="max-w-64 text-right"
+					placeholder="rules/flash-coder.md"
+					value={draft.rulesFile}
+					onChange={(event) => onChange({ rulesFile: event.target.value })}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.project.profileEnv")} description={t("settings.project.profileEnvHint")}>
+				<textarea
+					aria-label={t("settings.project.profileEnvFor", { name })}
+					className="min-h-16 w-full max-w-64 rounded-md border border-transparent bg-input/50 px-3 py-1 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+					placeholder="KEY=VALUE"
+					value={draft.env}
+					onChange={(event) => onChange({ env: event.target.value })}
+				/>
+			</SettingsRow>
+		</div>
+	);
+}
+
+let profileKeyCounter = 0;
+function newProfileKey(): string {
+	profileKeyCounter += 1;
+	return `profile-${Date.now().toString(36)}-${profileKeyCounter}`;
+}
+
+function nextProfileName(base: string, existing: ProfileDraft[]): string {
+	const taken = new Set(existing.map((p) => p.name.trim()));
+	const stem = base.trim() || "profile";
+	if (!taken.has(stem)) return stem;
+	for (let n = 2; n < 1000; n += 1) {
+		const candidate = `${stem}-${n}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	return `${stem}-${Date.now()}`;
+}
+
+function profileDraftsFromConfig(profiles: Record<string, RoleProfile> | undefined): ProfileDraft[] {
+	return Object.entries(profiles ?? {})
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, profile]) => ({
+			key: newProfileKey(),
+			name,
+			agent: profile.agent ?? "",
+			model: profile.agentConfig?.model ?? "",
+			permissions: profile.agentConfig?.permissions ?? "",
+			rulesFile: profile.rulesFile ?? "",
+			env: Object.entries(profile.env ?? {})
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([k, v]) => `${k}=${v}`)
+				.join("\n"),
+		}));
+}
+
+// parseEnvLines turns KEY=VALUE lines into a map; blank lines are skipped and a
+// line without "=" keeps the whole text as the key with an empty value so the
+// daemon's validation, not silent dropping, reports it.
+function parseEnvLines(text: string): Record<string, string> | undefined {
+	const env: Record<string, string> = {};
+	for (const raw of text.split("\n")) {
+		const line = raw.trim();
+		if (line === "") continue;
+		const at = line.indexOf("=");
+		if (at < 0) env[line] = "";
+		else env[line.slice(0, at).trim()] = line.slice(at + 1);
+	}
+	return Object.keys(env).length > 0 ? env : undefined;
+}
+
+function profilesFromDrafts(drafts: ProfileDraft[]): Record<string, RoleProfile> | undefined {
+	if (drafts.length === 0) return undefined;
+	const profiles: Record<string, RoleProfile> = {};
+	for (const draft of drafts) {
+		const name = draft.name.trim();
+		if (name === "") continue;
+		const agentConfig = buildRoleAgentConfig(undefined, draft.model.trim(), "", "", draft.permissions);
+		const profile: RoleProfile = {};
+		if (draft.agent) profile.agent = draft.agent as RoleProfile["agent"];
+		if (agentConfig) profile.agentConfig = agentConfig;
+		if (draft.rulesFile.trim()) profile.rulesFile = draft.rulesFile.trim();
+		const env = parseEnvLines(draft.env);
+		if (env) profile.env = env;
+		profiles[name] = profile;
+	}
+	return Object.keys(profiles).length > 0 ? profiles : undefined;
+}
+
+function validateProfileDrafts(drafts: ProfileDraft[], t: TFunction): string | null {
+	const seen = new Set<string>();
+	for (const draft of drafts) {
+		const name = draft.name.trim();
+		if (name === "") return t("settings.project.profileNameRequired");
+		if (/[\/\\]/.test(name) || name === "." || name === "..") return t("settings.project.profileNameInvalid", { name });
+		if (seen.has(name)) return t("settings.project.profileNameDuplicate", { name });
+		seen.add(name);
+	}
+	return null;
 }
 
 function projectKindLabel(kind: string, t: TFunction): string {

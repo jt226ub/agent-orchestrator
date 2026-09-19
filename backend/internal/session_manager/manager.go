@@ -831,6 +831,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
+	// A role profile (explicit, or the role override's) folds into the project
+	// config before anything reads it, so the harness, agent config, environment
+	// and rules below all see the profile's settings. The name is persisted on
+	// the session so restore folds the same profile back in.
+	cfg.Profile = project.Config.ResolveProfileName(cfg.Kind, cfg.Profile)
+	if project.Config, err = project.Config.WithProfile(cfg.Kind, cfg.Profile); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	}
 	standalone := cfg.ProjectID == ""
 	projectKind := project.Kind.WithDefault()
 	if standalone {
@@ -1086,6 +1094,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	metadata := domain.SessionMetadata{
 		Permissions:               rec.Metadata.Permissions,
+		Profile:                   rec.Metadata.Profile,
 		Branch:                    ws.Branch,
 		WorkspacePath:             ws.Path,
 		WorkspaceRepoPath:         ws.RepoPath,
@@ -1222,6 +1231,20 @@ func (m *Manager) inheritedSpawnPermissions(ctx context.Context, projectID domai
 		return "", fmt.Errorf("load parent conversation %s: %w", parentID, err)
 	}
 	return conversation.Settings.ApprovalMode, nil
+}
+
+// loadSessionProject loads a session's project with the session's role profile
+// folded in, so restores, relaunches and switches see the same harness, agent
+// config, environment and rules the spawn resolved.
+func (m *Manager) loadSessionProject(ctx context.Context, rec domain.SessionRecord) (domain.ProjectRecord, error) {
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return project, err
+	}
+	if project.Config, err = project.Config.WithProfile(rec.Kind, rec.Metadata.Profile); err != nil {
+		return project, fmt.Errorf("load project: %w", err)
+	}
+	return project, nil
 }
 
 // loadProject loads the project record so spawn can resolve its per-project
@@ -2132,7 +2155,7 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -2332,7 +2355,7 @@ func (m *Manager) resumeAgentRecordWithReservedGeneration(
 	requireNativeHistory bool,
 	reservedGeneration string,
 ) (RestoreResult, error) {
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
@@ -2404,7 +2427,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	}
 	// Recompute standing instructions, then reapply the durable finalized inbound
 	// handoff for this exact native conversation when one exists.
-	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID, rec.Metadata.Profile)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
@@ -2496,6 +2519,7 @@ func (m *Manager) relaunchSessionWithPolicyAndGeneration(ctx context.Context, op
 	}
 	metadata := domain.SessionMetadata{
 		Permissions:               rec.Metadata.Permissions,
+		Profile:                   rec.Metadata.Profile,
 		Branch:                    ws.Branch,
 		WorkspacePath:             ws.Path,
 		WorkspaceRepoPath:         ws.RepoPath,
@@ -2701,7 +2725,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // conversation identity. A restart-time dependency failure is not user intent
 // to terminate the session; the controller can be retried through Resume Agent.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return err
 	}
@@ -3064,7 +3088,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 
 		// Step 1: ensure the worktree exists. workspace.Restore re-creates it
 		// if it was removed by SaveAndTeardownAll.
-		project, err := m.loadProject(ctx, rec.ProjectID)
+		project, err := m.loadSessionProject(ctx, rec)
 		if err != nil {
 			m.logger.Error("restore-all: load project failed", "sessionID", rec.ID, "error", err)
 			continue
@@ -3294,7 +3318,7 @@ func (m *Manager) workspaceProjectRows(ctx context.Context, rec domain.SessionRe
 	if len(rows) <= 1 {
 		return nil, false, nil
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	project, err := m.loadSessionProject(ctx, rec)
 	if err != nil {
 		return nil, false, err
 	}
@@ -3963,7 +3987,7 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),
-		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Harness, cfg.Kind, projectConfig), cfg.AgentConfig).Permissions},
+		Metadata:          domain.SessionMetadata{Permissions: applySpawnAgentConfig(effectiveAgentConfig(cfg.Harness, cfg.Kind, projectConfig), cfg.AgentConfig).Permissions, Profile: cfg.Profile},
 		AutoReviewEnabled: projectConfig.AutoReview,
 		AutoInjectReview:  true,
 		AutoInjectCI:      true,
@@ -4158,7 +4182,7 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 // empty input box rather than receiving an auto-generated kickoff turn.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
-	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
+	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID, cfg.Profile)
 	if err != nil {
 		return "", "", err
 	}
@@ -4169,11 +4193,19 @@ func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (p
 // given kind from current store state. Restore recomputes them through here
 // rather than persisting them, so a restored worker points at the orchestrator
 // that is active now, not the one from its original spawn.
-func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID, profile string) (string, error) {
 	project, err := m.loadProject(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
+	if project.Config, err = project.Config.WithProfile(kind, profile); err != nil {
+		return "", err
+	}
+	// Standing rules are layered general to specific: the operating contract the
+	// daemon carries for every session, the project's own rules, then the role
+	// profile's rules file, which is the most specific text the agent reads.
+	contract := m.contractRules()
+	profileRulesFile := project.Config.ProfileRulesFile(profile)
 	cfg := systemPromptConfig{
 		Role:       promptRoleForKind(kind),
 		Standalone: projectID == "",
@@ -4182,7 +4214,16 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 
 	switch kind {
 	case domain.KindOrchestrator:
-		cfg.OrchestratorRules = project.Config.OrchestratorRules
+		rules, err := buildProjectRules(projectRulesConfig{
+			ProjectPath:      project.Path,
+			Contract:         contract,
+			AgentRules:       project.Config.OrchestratorRules,
+			ProfileRulesFile: profileRulesFile,
+		})
+		if err != nil {
+			return "", err
+		}
+		cfg.OrchestratorRules = rules
 	case domain.KindWorker:
 		if projectID != "" {
 			orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
@@ -4194,9 +4235,11 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 			}
 		}
 		rules, err := buildProjectRules(projectRulesConfig{
-			ProjectPath:    project.Path,
-			AgentRules:     project.Config.AgentRules,
-			AgentRulesFile: project.Config.AgentRulesFile,
+			ProjectPath:      project.Path,
+			Contract:         contract,
+			AgentRules:       project.Config.AgentRules,
+			AgentRulesFile:   project.Config.AgentRulesFile,
+			ProfileRulesFile: profileRulesFile,
 		})
 		if err != nil {
 			return "", err
@@ -4219,6 +4262,26 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		cfg.AdditionalSections = append(cfg.AdditionalSections, pointer)
 	}
 	return buildSystemPromptText(cfg), nil
+}
+
+// contractRules returns the operating contract the daemon carries for every
+// session, from <dataDir>/rules/contract.md, or "" when no contract is
+// installed. It is the first layer of a session's standing rules.
+func (m *Manager) contractRules() string {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(ContractRulesPath(m.dataDir)) //nolint:gosec // daemon-owned data dir
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// ContractRulesPath is where an installer drops the operating contract that
+// every session's standing rules begin with.
+func ContractRulesPath(dataDir string) string {
+	return filepath.Join(dataDir, "rules", "contract.md")
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent
@@ -4751,7 +4814,7 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 		return
 	}
 	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
-	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
+	if project, err := m.loadSessionProject(ctx, rec); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",

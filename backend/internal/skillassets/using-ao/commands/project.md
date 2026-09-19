@@ -126,7 +126,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, worker rules, and orchestrator rules). The config is resolved when a session spawns. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
+Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, role profiles, worker rules, and orchestrator rules). The config is resolved when a session spawns. Profiles are named bundles of harness, agent config, a repo-relative rules file and environment, defined under `profiles` in `--config-json` and named by `worker.profile`, `orchestrator.profile` or `ao spawn --profile`. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
 
 **Syntax:**
 ```
@@ -146,12 +146,14 @@ ao project set-config <id> [flags]
 | `--json` | Output the updated project as JSON | - |
 | `--model string` | Agent model override (e.g. `claude-opus-4-5`) | - |
 | `--orchestrator-agent string` | Harness override for orchestrator sessions | - |
+| `--orchestrator-profile string` | Role profile (a `profiles` entry) folded into orchestrator sessions | - |
 | `--orchestrator-rules string` | Project-specific standing instructions appended to orchestrator session prompts | - |
 | `--permission string` | Permission mode: `default`, `accept-edits`, `auto`, `bypass-permissions` | - |
 | `--post-create stringArray` | Command to run after workspace creation (repeatable) | - |
 | `--session-prefix string` | Displayed session-id prefix | - |
 | `--symlink stringArray` | Repo-relative path to symlink into workspaces (repeatable) | - |
 | `--worker-agent string` | Harness override for worker sessions | - |
+| `--worker-profile string` | Role profile (a `profiles` entry) folded into worker sessions | - |
 
 **Examples:**
 

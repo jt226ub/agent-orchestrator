@@ -511,6 +511,123 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved")).toBeInTheDocument();
 	}, 20_000);
 
+	it("accepts a worker set by profile alone and saves the role profiles", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { profile: "flash-coder" },
+				orchestrator: { agent: "claude-code" },
+				profiles: {
+					"flash-coder": { agent: "codex", agentConfig: { model: "flash-model", permissions: "bypass-permissions" }, rulesFile: "rules/flash.md", env: { HINT: "flash" } },
+					"pro-expert": { agent: "goose" },
+				},
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const workerProfile = await screen.findByRole("button", { name: "Worker profile" });
+		expect(workerProfile).toHaveTextContent("flash-coder");
+		// The profile supplies the worker's agent, so the required-agent warning stays quiet.
+		expect(screen.queryByText("Worker and orchestrator agents are required.")).not.toBeInTheDocument();
+		expect(await screen.findByText(/From the profile: Codex · flash-model/)).toBeInTheDocument();
+
+		await chooseOption(screen.getByRole("button", { name: "Orchestrator profile" }), "pro-expert");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: expect.objectContaining({
+					worker: expect.objectContaining({ profile: "flash-coder" }),
+					orchestrator: expect.objectContaining({ agent: "claude-code", profile: "pro-expert" }),
+					profiles: {
+						"flash-coder": { agent: "codex", agentConfig: { model: "flash-model", permissions: "bypass-permissions" }, rulesFile: "rules/flash.md", env: { HINT: "flash" } },
+						"pro-expert": { agent: "goose" },
+					},
+				}),
+			},
+		});
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
+	}, 20_000);
+
+	it("edits, duplicates and deletes profiles on the Profiles tab", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", profile: "flash-coder" },
+				orchestrator: { agent: "claude-code" },
+				profiles: { "flash-coder": { agent: "codex", rulesFile: "rules/flash.md" } },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "profiles");
+
+		expect(await screen.findByLabelText("Name of profile flash-coder")).toHaveValue("flash-coder");
+		expect(screen.getByLabelText("Rules file for profile flash-coder")).toHaveValue("rules/flash.md");
+
+		await userEvent.click(screen.getByRole("button", { name: "Duplicate profile flash-coder" }));
+		expect(screen.getByLabelText("Name of profile flash-coder-2")).toHaveValue("flash-coder-2");
+		await userEvent.click(screen.getByRole("button", { name: "Add profile" }));
+		const added = screen.getByLabelText("Name of profile profile");
+		await userEvent.clear(added);
+		await userEvent.type(added, "pro-expert");
+		await userEvent.type(screen.getByLabelText("Environment for profile pro-expert"), "TIER=pro{enter}EMPTY=");
+		await userEvent.click(screen.getByRole("button", { name: "Delete profile flash-coder-2" }));
+		expect(screen.queryByLabelText("Name of profile flash-coder-2")).not.toBeInTheDocument();
+
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: expect.objectContaining({
+					worker: expect.objectContaining({ agent: "codex", profile: "flash-coder" }),
+					profiles: {
+						"flash-coder": { agent: "codex", rulesFile: "rules/flash.md" },
+						"pro-expert": { env: { TIER: "pro", EMPTY: "" } },
+					},
+				}),
+			},
+		});
+	}, 20_000);
+
+	it("refuses duplicate profile names before saving", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" }, profiles: { one: { agent: "codex" } } },
+		});
+
+		renderSettings("proj-1", undefined, "profiles");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add profile" }));
+		const added = screen.getByLabelText("Name of profile profile");
+		await userEvent.clear(added);
+		await userEvent.type(added, "one");
+		submitSettings();
+		expect(await screen.findByText("Profile name one is used twice.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
 	it("loads workflow fields correctly", async () => {
 		mockProject({
 			id: "proj-1",
