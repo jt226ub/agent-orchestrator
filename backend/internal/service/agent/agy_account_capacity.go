@@ -87,7 +87,7 @@ func (c *agyAccountCapacityCoordinator) ensure(ctx context.Context, records []ag
 // ensureOne returns a display-fresh snapshot for one account, reading the CLI
 // when the cached one is stale and no backoff applies. Accounts that are not
 // signed in, or whose credential the plan rejected, are not read.
-func (c *agyAccountCapacityCoordinator) ensureOne(ctx context.Context, record agyAccountRecord, capabilities domain.AgyAccountCapabilities, bypassBackoff bool) (domain.AgyCapacitySnapshot, error) {
+func (c *agyAccountCapacityCoordinator) ensureOne(ctx context.Context, record agyAccountRecord, capabilities domain.AgyAccountCapabilities, bypassBackoff bool) (domain.AgyCapacitySnapshot, error) { //nolint:unparam // the snapshot mirrors the Codex coordinator's contract; callers read it back through snapshot().
 	if gated, ok := c.authGate(record, capabilities); ok {
 		return gated, nil
 	}

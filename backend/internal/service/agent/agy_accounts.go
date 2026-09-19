@@ -205,7 +205,7 @@ func (m *agyAccountManager) acquireGlobalMutation(ctx context.Context) (ports.Ag
 }
 
 func unavailableAgyCapabilities() domain.AgyAccountCapabilities {
-	unknown := domain.AgyCapabilityObservation{State: domain.AgyCapabilityUnknown, ReasonCode: domain.AgyCapabilityReasonUnknown, Reason: "Agy capability detection has not completed."}
+	unknown := domain.AgyCapabilityObservation{State: domain.AgyCapabilityUnknown, ReasonCode: domain.AgyCapabilityReasonUnknown, Reason: "Antigravity capability detection has not completed."}
 	return domain.AgyAccountCapabilities{AccountRead: unknown, NativeLogin: unknown, CapacityRead: unknown, GlobalSwitch: unknown}
 }
 
@@ -222,12 +222,12 @@ func (m *agyAccountManager) detectCapabilities(ctx context.Context) domain.AgyAc
 	} else if err := m.validateGlobalCredentialStore(); err != nil {
 		capabilities.GlobalSwitch = domain.AgyCapabilityObservation{
 			State: domain.AgyCapabilityUnsupported, ReasonCode: "global_credential_store_unsupported",
-			Reason: "Device-global account switching requires a file-backed Agy sign-in.",
+			Reason: "Device-global account switching requires a file-backed Antigravity sign-in.",
 		}
 	} else {
 		capabilities.GlobalSwitch = domain.AgyCapabilityObservation{
 			State: domain.AgyCapabilitySupported, ReasonCode: domain.AgyCapabilityReasonSupported,
-			Reason: "AO can switch file-backed Agy credentials on this device.",
+			Reason: "AO can switch file-backed Antigravity credentials on this device.",
 		}
 	}
 	m.mu.Lock()
@@ -306,7 +306,7 @@ func (m *agyAccountManager) deferAccountRead(id string) bool {
 
 func (m *agyAccountManager) ensure(ctx context.Context, ids []string, forceAuthentication bool, installation domain.AgentInstallationState) (AgyAccounts, error) {
 	if err := m.catalog.refresh(); err != nil {
-		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account discovery is unavailable")
+		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account discovery is unavailable")
 	}
 	records, err := m.catalog.recordsFor(ids)
 	if err != nil {
@@ -323,14 +323,14 @@ func (m *agyAccountManager) ensure(ctx context.Context, ids []string, forceAuthe
 		}
 	}
 	if installation == domain.AgentInstallationNotInstalled {
-		m.recordAuthenticationUnavailable(eligible, domain.AgentReadinessReasonAuthSkippedNotInstalled, "Authentication was not checked because Agy is not installed.")
+		m.recordAuthenticationUnavailable(eligible, domain.AgentReadinessReasonAuthSkippedNotInstalled, "Authentication was not checked because Antigravity is not installed.")
 		return m.view(ids)
 	}
 	capabilities := m.detectCapabilities(ctx)
 	if capabilities.AccountRead.State != domain.AgyCapabilitySupported {
 		code, reason := domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication could not be checked."
 		if capabilities.AccountRead.State == domain.AgyCapabilityUnsupported {
-			code, reason = domain.AgentReadinessReasonAuthCheckUnsupported, "This Agy version cannot check authentication."
+			code, reason = domain.AgentReadinessReasonAuthCheckUnsupported, "This Antigravity version cannot check authentication."
 		}
 		m.recordAuthenticationUnavailable(eligible, code, reason)
 		return m.view(ids)
@@ -360,7 +360,7 @@ func (m *agyAccountManager) ensure(ctx context.Context, ids []string, forceAuthe
 		}
 	}
 	if err := m.capacity.ensure(ctx, eligible, capabilities, forceAuthentication); err != nil && !errors.Is(err, context.Canceled) {
-		m.logger.Debug("Agy account capacity ensure degraded", "failure_category", "capacity_read")
+		m.logger.Debug("Antigravity account capacity ensure degraded", "failure_category", "capacity_read")
 	}
 	result, err := m.view(ids)
 	m.publish()
@@ -403,7 +403,7 @@ func (m *agyAccountManager) forceAuthenticationRetry(records []agyAccountRecord)
 	}
 }
 
-func (m *agyAccountManager) ensureAuthentication(ctx context.Context, record agyAccountRecord, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, error) {
+func (m *agyAccountManager) ensureAuthentication(ctx context.Context, record agyAccountRecord, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	for {
 		if err := ctx.Err(); err != nil {
 			return domain.AgentAuthenticationObservation{}, err
@@ -567,17 +567,17 @@ func (m *agyAccountManager) retryAuthenticationAfterDeviceChange(id string, call
 func agyAccountAuthenticationObservation(at time.Time, state domain.AgentAuthenticationState) domain.AgentAuthenticationObservation {
 	switch state {
 	case domain.AgentAuthenticationAuthorized:
-		return successfulAuthentication(at, state, domain.AgentReadinessReasonAuthorized, "Agy appears signed in.")
+		return successfulAuthentication(at, state, domain.AgentReadinessReasonAuthorized, "Antigravity appears signed in.")
 	case domain.AgentAuthenticationUnauthorized:
-		return successfulAuthentication(at, state, domain.AgentReadinessReasonUnauthorized, "Agy needs authentication.")
+		return successfulAuthentication(at, state, domain.AgentReadinessReasonUnauthorized, "Antigravity needs authentication.")
 	case domain.AgentAuthenticationNotApplicable:
-		return successfulAuthentication(at, state, domain.AgentReadinessReasonAuthNotApplicable, "Agy authentication is not required.")
+		return successfulAuthentication(at, state, domain.AgentReadinessReasonAuthNotApplicable, "Antigravity authentication is not required.")
 	default:
 		return failedAuthentication(at, domain.AgentReadinessReasonAuthCheckInconclusive, "Authentication check was inconclusive.")
 	}
 }
 
-func (m *agyAccountManager) finishAuthentication(ctx context.Context, id string, observation domain.AgentAuthenticationObservation, method domain.AgyAuthMethod, email *string, failed bool, call *agyAccountAuthCall) {
+func (m *agyAccountManager) finishAuthentication(ctx context.Context, id string, observation domain.AgentAuthenticationObservation, method domain.AgyAuthMethod, email *string, failed bool, call *agyAccountAuthCall) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	state := m.auth[id]
 	if !state.reauthenticationRequired {
@@ -608,7 +608,7 @@ func (m *agyAccountManager) finishAuthentication(ctx context.Context, id string,
 				// account/read result so a later catalog refresh or daemon restart
 				// cannot regress the label to the internal account-id fallback.
 				if err := m.catalog.updateVerifiedDescriptor(ctx, id, ports.AgyAccountObservation{Method: method, Email: email}); err != nil {
-					m.logger.Warn("Agy account display metadata could not be persisted", "accountID", id)
+					m.logger.Warn("Antigravity account display metadata could not be persisted", "accountID", id)
 				}
 			}
 			state.invalidated = false
@@ -706,10 +706,10 @@ func (m *agyAccountManager) requireReauthentication(id string) {
 	state.nextRetryAt = time.Time{}
 	m.mu.Unlock()
 	m.catalog.updateSnapshot(id, func(snapshot *domain.AgyAccountSnapshot) {
-		snapshot.Authentication = signedOutAuthentication(m.now(), "Agy could not refresh this account. Sign in again to continue.")
+		snapshot.Authentication = signedOutAuthentication(m.now(), "Antigravity could not refresh this account. Sign in again to continue.")
 		snapshot.Capacity = unavailableAgyCapacity()
 	})
-	m.capacity.replace(id, staticAgyCapacity(domain.AgyCapacityUnknown, domain.AgyCapacityReasonSkippedSignedOut, "Sign in to Agy to see subscription capacity."), "reauthentication_required")
+	m.capacity.replace(id, staticAgyCapacity(domain.AgyCapacityUnknown, domain.AgyCapacityReasonSkippedSignedOut, "Sign in to Antigravity to see subscription capacity."), "reauthentication_required")
 	m.authenticationChanged()
 }
 

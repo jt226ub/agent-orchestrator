@@ -154,7 +154,7 @@ func (c *codexAccountCatalog) updateSnapshot(id string, update func(*domain.Code
 	c.records[id] = record
 }
 
-func (c *codexAccountCatalog) updateVerifiedDescriptor(ctx context.Context, id string, observation ports.CodexAccountObservation) error {
+func (c *codexAccountCatalog) updateVerifiedDescriptor(ctx context.Context, id string, observation ports.CodexAccountObservation) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	record, ok := c.record(id)
 	if !ok || (record.Snapshot.Status != domain.CodexAccountStatusValid && record.Snapshot.Status != domain.CodexAccountStatusSignedOut) {
 		return errors.New("codex account is unavailable")
@@ -268,7 +268,7 @@ func (c *codexAccountCatalog) setOnRemoved(callback func([]string)) {
 	c.mu.Unlock()
 }
 
-func (c *codexAccountCatalog) readManaged(id string) codexAccountRecord {
+func (c *codexAccountCatalog) readManaged(id string) codexAccountRecord { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	accountDir := filepath.Join(c.root, id)
 	home := filepath.Join(accountDir, codexCredentialHomeDirectory)
 	broken := func(code, reason string) codexAccountRecord {
@@ -418,7 +418,7 @@ func (c *codexAccountCatalog) markSignedOut(id string) (codexAccountRecord, erro
 	return refreshed, nil
 }
 
-func (c *codexAccountCatalog) deleteSignedOut(id string) error {
+func (c *codexAccountCatalog) deleteSignedOut(id string) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	record, ok := c.record(id)
 	if !ok || record.Snapshot.Status != domain.CodexAccountStatusSignedOut {
 		return errors.New("codex account is not signed out")
@@ -496,7 +496,7 @@ func readCodexAccountDescriptor(path string) (codexAccountDescriptor, error) {
 	return descriptor, nil
 }
 
-func (c *codexAccountCatalog) commitPending(pendingDir string, observation ports.CodexAccountObservation) (codexAccountRecord, error) {
+func (c *codexAccountCatalog) commitPending(pendingDir string, observation ports.CodexAccountObservation) (codexAccountRecord, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if err := ensurePrivateDirectory(c.root); err != nil {
 		return codexAccountRecord{}, err
 	}
@@ -572,7 +572,7 @@ func createPendingCredentialHome(pendingRoot, operationID string) (string, strin
 	return pendingDir, home, nil
 }
 
-func cleanupPendingCredentialHomes(pendingRoot string) error {
+func cleanupPendingCredentialHomes(pendingRoot string) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if err := ensurePrivateDirectory(pendingRoot); err != nil {
 		return err
 	}

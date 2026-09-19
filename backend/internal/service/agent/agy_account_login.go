@@ -22,13 +22,13 @@ func (m *agyAccountManager) openLoginTerminal(ctx context.Context, targetAccount
 	}
 	defer release()
 	if m.terminal == nil || m.executable == nil {
-		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy login terminal is unavailable")
+		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity login terminal is unavailable")
 	}
 	targetAccountID = strings.TrimSpace(targetAccountID)
 	deviceCredential, deviceState, deviceErr := readCodexFileState(m.globalCredentialPath(), true)
 	if deviceErr != nil {
 		if targetAccountID != "" {
-			return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_RECONCILIATION_UNAVAILABLE", "The device Agy account could not be refreshed")
+			return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_RECONCILIATION_UNAVAILABLE", "The device Antigravity account could not be refreshed")
 		}
 		// Normal Add remains available when the device store cannot be inspected,
 		// but it must never auto-activate based on an unsafe absence assumption.
@@ -37,14 +37,14 @@ func (m *agyAccountManager) openLoginTerminal(ctx context.Context, targetAccount
 	if targetAccountID != "" {
 		record, ok := m.catalog.record(targetAccountID)
 		if !ok || (record.Snapshot.Status != domain.AgyAccountStatusValid && record.Snapshot.Status != domain.AgyAccountStatusSignedOut) {
-			return AgyAccountLoginTerminalStart{}, apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found")
+			return AgyAccountLoginTerminalStart{}, apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found")
 		}
 	}
 	id := m.newID()
 	now := m.now()
-	loginReason := "Sign in with the same Agy account."
+	loginReason := "Sign in with the same Antigravity account."
 	if targetAccountID == "" {
-		loginReason = "Sign in to add a Agy account."
+		loginReason = "Sign in to add an Antigravity account."
 	} else if record, ok := m.catalog.record(targetAccountID); ok && record.Snapshot.AccountEmail != nil && safeAccountEmail(*record.Snapshot.AccountEmail) {
 		loginReason = "Sign in with " + strings.TrimSpace(*record.Snapshot.AccountEmail) + ". A different account will not be saved."
 	}
@@ -53,7 +53,7 @@ func (m *agyAccountManager) openLoginTerminal(ctx context.Context, targetAccount
 	m.mu.Lock()
 	if m.login != nil && !agyTerminalLoginStatus(m.login.snapshot.Status) {
 		m.mu.Unlock()
-		return AgyAccountLoginTerminalStart{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "A Agy account login is already in progress", nil)
+		return AgyAccountLoginTerminalStart{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "An Antigravity account login is already in progress", nil)
 	}
 	previous := m.login
 	m.login = &agyAccountLoginOperation{
@@ -70,17 +70,17 @@ func (m *agyAccountManager) openLoginTerminal(ctx context.Context, targetAccount
 	pendingDir, home, err := agyCreatePendingCredentialHome(m.pendingRoot, id)
 	if err != nil {
 		m.clearLoginReservation(id)
-		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy login could not be prepared")
+		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity login could not be prepared")
 	}
 	executable, err := m.executable()
 	if err != nil || strings.TrimSpace(executable) == "" {
 		_ = os.RemoveAll(pendingDir)
 		m.clearLoginReservation(id)
-		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy login terminal is unavailable")
+		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity login terminal is unavailable")
 	}
-	title := "Add Agy account"
+	title := "Add Antigravity account"
 	if targetAccountID != "" {
-		title = "Sign in to Agy account"
+		title = "Sign in to Antigravity account"
 	}
 	// The CLI keys its config directory off HOME, so the login terminal (and
 	// only it) runs with HOME at the pending skeleton; worker sessions never do.
@@ -88,14 +88,14 @@ func (m *agyAccountManager) openLoginTerminal(ctx context.Context, targetAccount
 	if err != nil {
 		_ = os.RemoveAll(pendingDir)
 		m.clearLoginReservation(id)
-		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy login terminal could not be opened")
+		return AgyAccountLoginTerminalStart{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity login terminal could not be opened")
 	}
 	m.mu.Lock()
 	if m.login == nil || m.login.snapshot.OperationID != id {
 		m.mu.Unlock()
 		_ = m.terminal.CloseShellTerminal(context.WithoutCancel(ctx), terminal.HandleID)
 		_ = os.RemoveAll(pendingDir)
-		return AgyAccountLoginTerminalStart{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "A Agy account login changed concurrently", nil)
+		return AgyAccountLoginTerminalStart{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "An Antigravity account login changed concurrently", nil)
 	}
 	m.login.pendingDir, m.login.home, m.login.terminalHandle = pendingDir, home, terminal.HandleID
 	m.login.terminalTitle, m.login.terminalCreated = terminal.Title, terminal.CreatedAt
@@ -158,12 +158,12 @@ func agyTerminalLoginStatus(status domain.AgyAccountLoginStatus) bool {
 	return status == domain.AgyAccountLoginCompleted || status == domain.AgyAccountLoginCancelled || status == domain.AgyAccountLoginExpired || status == domain.AgyAccountLoginFailed
 }
 
-func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string) (domain.AgyAccountLoginOperation, error) {
+func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string) (domain.AgyAccountLoginOperation, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	op := m.login
 	if op == nil || op.snapshot.OperationID != operationID {
 		m.mu.Unlock()
-		return domain.AgyAccountLoginOperation{}, apierr.NotFound("AGY_ACCOUNT_LOGIN_NOT_FOUND", "Agy account login operation not found")
+		return domain.AgyAccountLoginOperation{}, apierr.NotFound("AGY_ACCOUNT_LOGIN_NOT_FOUND", "Antigravity account login operation not found")
 	}
 	if agyTerminalLoginStatus(op.snapshot.Status) {
 		result := op.snapshot
@@ -181,14 +181,14 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 		return result, nil
 	}
 	op.snapshot.Status = domain.AgyAccountLoginVerifying
-	op.snapshot.Reason = "Verifying the Agy account."
+	op.snapshot.Reason = "Verifying the Antigravity account."
 	home, pendingDir, terminalHandle := op.home, op.pendingDir, op.terminalHandle
 	m.mu.Unlock()
 	m.publish()
 	pendingPath := filepath.Join(home, agyCredentialFilename)
 	pendingCredential, admitted, credentialErr := readCodexFileState(pendingPath, false)
 	if credentialErr != nil {
-		return m.finishLogin(operationID, domain.AgyAccountLoginUnauthorized, domain.AgyAccountLoginReasonUnauthorized, "Agy is still signed out.", nil), nil
+		return m.finishLogin(operationID, domain.AgyAccountLoginUnauthorized, domain.AgyAccountLoginReasonUnauthorized, "Antigravity is still signed out.", nil), nil
 	}
 	identity, identityErr := parseAgyCredentialIdentity(pendingCredential)
 	latestCredential, latest, latestErr := readCodexFileState(pendingPath, false)
@@ -233,10 +233,10 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 	}()
 	targetAccountID := op.targetAccountID
 	var record agyAccountRecord
-	if targetAccountID != "" {
+	if targetAccountID != "" { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 		target, targetFound := m.catalog.record(targetAccountID)
 		if !targetFound || !agyLoginCredentialIdentifiesRecord(target, identity, pendingCredential) {
-			return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "Sign in with the same Agy account to replace its credentials.", nil), nil
+			return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "Sign in with the same Antigravity account to replace its credentials.", nil), nil
 		}
 		currentGlobal, currentState, currentErr := readCodexFileState(m.globalCredentialPath(), true)
 		if currentErr != nil || !sameCodexFileState(op.deviceState, currentState) || !bytes.Equal(op.startingGlobalCredential, currentGlobal) {
@@ -255,7 +255,7 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 			var replaceErr error
 			record, replaceErr = m.catalog.replaceCredential(ctx, targetAccountID, credential, observation)
 			if replaceErr != nil {
-				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Agy account could not be saved.", nil), nil
+				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Antigravity account could not be saved.", nil), nil
 			}
 		}
 		_ = os.RemoveAll(pendingDir)
@@ -265,7 +265,7 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 			var replaceErr error
 			record, replaceErr = m.catalog.replaceCredential(ctx, existing.Snapshot.ID, pendingCredential, observation)
 			if replaceErr != nil {
-				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Agy account could not be saved.", nil), nil
+				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Antigravity account could not be saved.", nil), nil
 			}
 			_ = os.RemoveAll(pendingDir)
 			m.clearReauthenticationRequired(existing.Snapshot.ID)
@@ -273,7 +273,7 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 			var err error
 			record, err = m.catalog.commitPending(pendingDir, observation)
 			if err != nil {
-				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Agy account could not be saved.", nil), nil
+				return m.finishLogin(operationID, domain.AgyAccountLoginFailed, domain.AgyAccountLoginReasonFailed, "The verified Antigravity account could not be saved.", nil), nil
 			}
 		}
 		activationCredentialPath := filepath.Join(record.Home, agyCredentialFilename)
@@ -307,7 +307,7 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 	// immediate success visible while the independent protected check enriches
 	// email, plan and usage in the background.
 	m.catalog.updateSnapshot(record.Snapshot.ID, func(snapshot *domain.AgyAccountSnapshot) {
-		snapshot.Authentication = successfulAuthentication(m.now(), domain.AgentAuthenticationAuthorized, domain.AgentReadinessReasonAuthorized, "Agy is signed in.")
+		snapshot.Authentication = successfulAuthentication(m.now(), domain.AgentAuthenticationAuthorized, domain.AgentReadinessReasonAuthorized, "Antigravity is signed in.")
 		if observation.Method != domain.AgyAuthMethodUnknown {
 			snapshot.AuthMethod = observation.Method
 		}
@@ -323,9 +323,9 @@ func (m *agyAccountManager) verifyLogin(ctx context.Context, operationID string)
 	snapshot := latestRecord.Snapshot
 	snapshot.Active = snapshot.ID == m.activeAccountID()
 	snapshot.Capacity = m.capacity.snapshot(snapshot.ID)
-	reason := "Agy account added."
+	reason := "Antigravity account added."
 	if targetAccountID != "" {
-		reason = "Agy account signed in."
+		reason = "Antigravity account signed in."
 	}
 	result := m.finishLogin(operationID, domain.AgyAccountLoginCompleted, domain.AgyAccountLoginReasonCompleted, reason, &snapshot)
 	if m.terminal != nil && terminalHandle != "" {
@@ -350,9 +350,9 @@ func (m *agyAccountManager) matchCredentialAccount(credential []byte, identity a
 }
 
 func (m *agyAccountManager) finishLoginRetryable(id string) domain.AgyAccountLoginOperation {
-	return m.finishLogin(id, domain.AgyAccountLoginRetryable, domain.AgyAccountLoginReasonFailed, "The Agy credential is not ready yet. Try again.", nil)
+	return m.finishLogin(id, domain.AgyAccountLoginRetryable, domain.AgyAccountLoginReasonFailed, "The Antigravity credential is not ready yet. Try again.", nil)
 }
-func (m *agyAccountManager) finishLogin(id string, status domain.AgyAccountLoginStatus, code, reason string, account *domain.AgyAccountSnapshot) domain.AgyAccountLoginOperation {
+func (m *agyAccountManager) finishLogin(id string, status domain.AgyAccountLoginStatus, code, reason string, account *domain.AgyAccountSnapshot) domain.AgyAccountLoginOperation { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.login == nil || m.login.snapshot.OperationID != id {
@@ -379,7 +379,7 @@ func (m *agyAccountManager) cancelLogin(ctx context.Context, operationID string)
 		op := m.login
 		if op == nil || op.snapshot.OperationID != operationID {
 			m.mu.Unlock()
-			return domain.AgyAccountLoginOperation{}, apierr.NotFound("AGY_ACCOUNT_LOGIN_NOT_FOUND", "Agy account login operation not found")
+			return domain.AgyAccountLoginOperation{}, apierr.NotFound("AGY_ACCOUNT_LOGIN_NOT_FOUND", "Antigravity account login operation not found")
 		}
 		if agyTerminalLoginStatus(op.snapshot.Status) {
 			result := op.snapshot
@@ -411,15 +411,15 @@ func (m *agyAccountManager) cancelLogin(ctx context.Context, operationID string)
 					m.login.closing = false
 					m.login.snapshot.Status = domain.AgyAccountLoginRetryable
 					m.login.snapshot.ReasonCode = domain.AgyAccountLoginReasonFailed
-					m.login.snapshot.Reason = "Agy login terminal could not be closed."
+					m.login.snapshot.Reason = "Antigravity login terminal could not be closed."
 				}
 				m.mu.Unlock()
 				m.publish()
-				return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy login terminal could not be closed")
+				return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity login terminal could not be closed")
 			}
 		}
 		_ = os.RemoveAll(pending)
-		return m.finishLogin(operationID, domain.AgyAccountLoginCancelled, domain.AgyAccountLoginReasonCancelled, "Agy account login was cancelled.", nil), nil
+		return m.finishLogin(operationID, domain.AgyAccountLoginCancelled, domain.AgyAccountLoginReasonCancelled, "Antigravity account login was cancelled.", nil), nil
 	}
 }
 
@@ -458,7 +458,7 @@ func (m *agyAccountManager) expireLogin(ctx context.Context, id string, at time.
 			_ = m.terminal.CloseShellTerminal(ctx, handle)
 		}
 		_ = os.RemoveAll(pending)
-		m.finishLogin(id, domain.AgyAccountLoginExpired, domain.AgyAccountLoginReasonExpired, "Agy account login expired.", nil)
+		m.finishLogin(id, domain.AgyAccountLoginExpired, domain.AgyAccountLoginReasonExpired, "Antigravity account login expired.", nil)
 		return
 	}
 }

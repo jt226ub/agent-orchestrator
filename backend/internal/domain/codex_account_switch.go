@@ -1,4 +1,4 @@
-package domain
+package domain //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 
 import "time"
 

@@ -194,7 +194,7 @@ func capacitySignedOut(text string) bool {
 	return false
 }
 
-func environmentWithout(base []string, keys []string) []string {
+func environmentWithout(base, keys []string) []string {
 	unset := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		unset[key] = struct{}{}

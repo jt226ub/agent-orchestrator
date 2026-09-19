@@ -171,7 +171,7 @@ func (m *codexAccountManager) accountMayOwnDeviceCredential(accountID string) bo
 	return accountID != "" && accountID == lastKnownDeviceAccountID
 }
 
-func (m *codexAccountManager) activateFromCredentialLocked(ctx context.Context, accountID, sourceCredential string, expectedGlobal []byte) error {
+func (m *codexAccountManager) activateFromCredentialLocked(ctx context.Context, accountID, sourceCredential string, expectedGlobal []byte) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	notCommitted := func(err error) error {
 		return errors.Join(ports.ErrCodexAccountSwitchNotCommitted, err)
 	}

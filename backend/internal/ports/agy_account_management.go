@@ -1,4 +1,4 @@
-package ports
+package ports //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 
 import (
 	"context"

@@ -69,7 +69,7 @@ func (m *agyAccountManager) runAccountStoreInitialization(call *agyAccountReconc
 		m.accountStoreNextRetry = m.now().Add(delay)
 		var failure *agyAccountLocalFailure
 		if errors.As(err, &failure) {
-			m.logger.Warn("Agy account store initialization failed", "reasonCode", failure.reason, "retryable", failure.retryable)
+			m.logger.Warn("Antigravity account store initialization failed", "reasonCode", failure.reason, "retryable", failure.retryable)
 		}
 	}
 	call.err = err
@@ -136,7 +136,7 @@ func (m *agyAccountManager) reconcileGlobal(ctx context.Context) error {
 	return m.reconcileGlobalWithPolicy(ctx, false)
 }
 
-func (m *agyAccountManager) reconcileGlobalWithPolicy(ctx context.Context, force bool) error {
+func (m *agyAccountManager) reconcileGlobalWithPolicy(ctx context.Context, force bool) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -253,7 +253,7 @@ func (m *agyAccountManager) runGlobalReconciliation(call *agyAccountReconcileCal
 			m.reconciliation.Status = domain.AgyDeviceReconciliationBlocked
 			m.reconciliation.NextRetryAt = nil
 		}
-		m.logger.Warn("Agy device reconciliation failed", "reasonCode", failure.reason, "retryable", failure.retryable)
+		m.logger.Warn("Antigravity device reconciliation failed", "reasonCode", failure.reason, "retryable", failure.retryable)
 	}
 	if m.reconcile == call {
 		m.reconcile = nil
@@ -310,7 +310,7 @@ func (m *agyAccountManager) markDeviceReconciledLocked(active bool, at time.Time
 	m.reconciliation.NextRetryAt = nil
 }
 
-func (m *agyAccountManager) reconcileGlobalInner(ctx context.Context) error {
+func (m *agyAccountManager) reconcileGlobalInner(ctx context.Context) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	exclusive, err := m.acquireGlobalMutation(ctx)
 	if err != nil {
 		return err
@@ -498,7 +498,7 @@ func (m *agyAccountManager) setManagedGlobal(accountID string) {
 func mapUnknownAgyAccount(err error) error {
 	var unknown unknownAgyAccountError
 	if errors.As(err, &unknown) {
-		return apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Unknown Agy account", map[string]any{"accountId": unknown.id})
+		return apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Unknown Antigravity account", map[string]any{"accountId": unknown.id})
 	}
 	return err
 }

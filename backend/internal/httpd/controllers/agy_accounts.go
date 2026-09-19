@@ -64,7 +64,7 @@ func (c *AgyAccountsController) getSwitch(w http.ResponseWriter, r *http.Request
 	envelope.WriteJSON(w, http.StatusOK, newAgySwitchResponse(result))
 }
 
-func (c *AgyAccountsController) startSwitch(w http.ResponseWriter, r *http.Request) {
+func (c *AgyAccountsController) startSwitch(w http.ResponseWriter, r *http.Request) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/agy/account-switches")
 		return
@@ -91,17 +91,17 @@ func (c *AgyAccountsController) startSwitch(w http.ResponseWriter, r *http.Reque
 func writeAgyAccountSwitchError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ports.ErrAgyAccountAlreadyActive):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_ALREADY_ACTIVE", "This Agy account is already active", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_ALREADY_ACTIVE", "This Antigravity account is already active", nil)
 	case errors.Is(err, ports.ErrAgyAccountSwitchInProgress):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_SWITCH_IN_PROGRESS", "A Agy account switch is already in progress", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_SWITCH_IN_PROGRESS", "An Antigravity account switch is already in progress", nil)
 	case errors.Is(err, ports.ErrAgyAccountSwitchIdempotencyConflict):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key belongs to another Agy account switch", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key belongs to another Antigravity account switch", nil)
 	case errors.Is(err, ports.ErrAgyGlobalCredentialStoreUnsupported):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Agy account switching requires file-backed credentials", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Antigravity account switching requires file-backed credentials", nil)
 	case errors.Is(err, ports.ErrAgyGlobalAccountChanged):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_GLOBAL_ACCOUNT_CHANGED", "The device Agy account changed during switching", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_GLOBAL_ACCOUNT_CHANGED", "The device Antigravity account changed during switching", nil)
 	case errors.Is(err, ports.ErrAgyAccountLoginInProgress):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Agy account login before switching accounts", nil)
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Antigravity account login before switching accounts", nil)
 	default:
 		envelope.WriteError(w, r, err)
 	}

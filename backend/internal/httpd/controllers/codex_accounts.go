@@ -88,7 +88,7 @@ func (c *CodexAccountsController) consumeResetCredit(w http.ResponseWriter, r *h
 	envelope.WriteJSON(w, http.StatusOK, newCodexAccountsResponse(result))
 }
 
-func (c *CodexAccountsController) startSwitch(w http.ResponseWriter, r *http.Request) {
+func (c *CodexAccountsController) startSwitch(w http.ResponseWriter, r *http.Request) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/codex/account-switches")
 		return
