@@ -1034,6 +1034,10 @@ button.settings-row-bar {
 	background-color: color-mix(in oklch, var(--card) 97%, var(--foreground));
 }
 
+.composer-run-controls[data-slots="3"] {
+	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr);
+}
+
 .composer-toolbar-slot {
 	min-width: 0;
 }

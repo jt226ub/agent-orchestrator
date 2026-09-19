@@ -4,6 +4,7 @@ import {
 	type TaskComposerAgentControl,
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
+	type TaskComposerProfileControl,
 } from "@aoagents/product-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,6 +44,7 @@ type CreateTaskInput = {
 	agent?: DelegateAgent;
 	model?: string;
 	effort?: string;
+	profile?: string;
 	mode?: "tui";
 	approvalMode?: "bypass-permissions";
 	attachments?: FileAttachmentPayload[];
@@ -104,6 +106,8 @@ export function TaskComposer({
 	const [effort, setEffort] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
+	const [profile, setProfile] = useState("");
+	const [profileTouched, setProfileTouched] = useState(false);
 	const [modelTouched, setModelTouched] = useState(false);
 	const [effortTouched, setEffortTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -171,6 +175,7 @@ export function TaskComposer({
 					agent: input.agent,
 					...(input.model ? { model: input.model } : {}),
 					...(input.effort !== undefined ? { effort: input.effort } : {}),
+					...(input.profile ? { profile: input.profile } : {}),
 						...(input.mode ? { mode: input.mode } : {}),
 						...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
 						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
@@ -257,7 +262,17 @@ export function TaskComposer({
 	// The composer preselects the agent and model a spawn would actually use
 	// instead of parking the controls on a "default" label the user has to
 	// remember. Both resolved values remain directly editable.
-	const projectWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	// A role profile, when the project defines any, is picked first: the worker
+	// override's profile by default, and the profile's agent and model become
+	// the resolved defaults the daemon would fold in.
+	const projectProfiles = projectQuery.data?.config?.profiles ?? {};
+	const profileNames = Object.keys(projectProfiles).sort((a, b) => a.localeCompare(b));
+	const defaultProfile = projectQuery.data?.config?.worker?.profile ?? "";
+	const selectedProfile = profileTouched ? profile : defaultProfile;
+	const selectedProfileConfig = selectedProfile ? projectProfiles[selectedProfile] : undefined;
+	const activeTemplate = projectQuery.data?.config?.template ?? "";
+	const templateWorkerProfile = activeTemplate ? (projectQuery.data?.config?.templates?.[activeTemplate]?.worker ?? "") : "";
+	const projectWorkerAgent = selectedProfileConfig?.agent || projectQuery.data?.config?.worker?.agent || "";
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
@@ -268,11 +283,11 @@ export function TaskComposer({
 		purpose: "launch",
 	});
 	const defaultWorkerModel =
-		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
+		selectedProfileConfig?.agentConfig?.model || projectQuery.data?.config?.worker?.agentConfig?.model || projectQuery.data?.config?.agentConfig?.model || "";
 	const defaultWorkerMode =
-		projectQuery.data?.config?.worker?.agentConfig?.mode ?? projectQuery.data?.config?.agentConfig?.mode ?? "";
+		selectedProfileConfig?.agentConfig?.mode || projectQuery.data?.config?.worker?.agentConfig?.mode || projectQuery.data?.config?.agentConfig?.mode || "";
 	const defaultWorkerEffort =
-		projectQuery.data?.config?.worker?.agentConfig?.effort ?? projectQuery.data?.config?.agentConfig?.effort ?? "";
+		selectedProfileConfig?.agentConfig?.effort || projectQuery.data?.config?.worker?.agentConfig?.effort || projectQuery.data?.config?.agentConfig?.effort || "";
 	const projectModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
 	const projectModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
@@ -353,7 +368,7 @@ export function TaskComposer({
 		if (!effortTouched) setEffort(selectedAgent === defaultWorkerAgent ? defaultWorkerEffort : "");
 	}, [defaultWorkerAgent, defaultWorkerEffort, effortTouched, selectedAgent]);
 
-	const isDirty = isPromptDirty || modelTouched || effortTouched || attachments.length > 0;
+	const isDirty = isPromptDirty || modelTouched || effortTouched || profileTouched || attachments.length > 0;
 	const handlePromptChange = useCallback((value: string) => {
 		const nextDirty = value.trim() !== "";
 		setIsPromptDirty((wasDirty) => (wasDirty === nextDirty ? wasDirty : nextDirty));
@@ -395,6 +410,7 @@ export function TaskComposer({
 				// or the resolved default, so spawning names it explicitly.
 				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
+				profile: selectedProfile || undefined,
 				effort: interfaceMode === "tui" || !effortTouched ? undefined : effort,
 				mode: interfaceMode,
 				approvalMode,
@@ -439,6 +455,38 @@ export function TaskComposer({
 				task: t("newTask.task"),
 				taskPlaceholder,
 			}}
+			profile={
+				profileNames.length > 0
+					? {
+							label: t("newTask.profile"),
+							placeholder: t("newTask.selectProfile"),
+							value: selectedProfile,
+							disabled: isSubmitting,
+							options: [
+								{ id: "", label: t("newTask.profileNone") },
+								...profileNames.map((name) => ({
+									id: name,
+									label: name === templateWorkerProfile ? t("newTask.profileWithTemplate", { profile: name, template: activeTemplate }) : name,
+								})),
+								...(selectedProfile && !profileNames.includes(selectedProfile) ? [{ id: selectedProfile, label: selectedProfile }] : []),
+							],
+							onChange: (value) => {
+								setProfile(value);
+								setProfileTouched(true);
+								// The profile's agent and model become the defaults; the
+								// agent and model controls keep following them until touched.
+								setAgent("");
+								setAgentTouched(false);
+								setModel("");
+								setMode("");
+								setModelTouched(false);
+								setEffort("");
+								setEffortTouched(false);
+							},
+						}
+					: undefined
+			}
+			renderProfileControl={(control) => <TaskProfilePicker {...control} />}
 			agent={{
 				label: t("newTask.agent"),
 				placeholder: t("newTask.selectAgent"),
@@ -506,6 +554,26 @@ export function TaskComposer({
 					} : undefined}
 				/>
 			)}
+		/>
+	);
+}
+
+function TaskProfilePicker({ disabled, label, onChange, options, placeholder, value }: TaskComposerProfileControl) {
+	const visibleLabel = options.find((option) => option.id === value)?.label ?? (value || placeholder);
+	return (
+		<SettingsOptionMenu
+			aria-label={label}
+			disabled={disabled}
+			value={value}
+			options={options.map((option) => ({ value: option.id, label: option.label }))}
+			triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
+			menuAlign="start"
+			renderTrigger={() => (
+				<span className="min-w-0 truncate text-control text-foreground" title={visibleLabel}>
+					{visibleLabel}
+				</span>
+			)}
+			onChange={onChange}
 		/>
 	);
 }

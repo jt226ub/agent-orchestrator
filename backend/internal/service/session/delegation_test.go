@@ -17,11 +17,13 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 		agent     domain.AgentHarness
 		model     string
 		effort    string
+		profile   string
 		mode      domain.SessionMode
 		wantAgent domain.AgentHarness
 	}{
 		{name: "project default"},
 		{name: "requested agent model and mode", agent: domain.HarnessCursor, model: "  sonnet-custom  ", effort: " high ", mode: domain.SessionModeChat, wantAgent: domain.HarnessCursor},
+		{name: "requested profile", profile: "flash-coder"},
 	}
 
 	for _, tt := range tests {
@@ -43,7 +45,7 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 
 			brief := "  Fix the renderer\nwithout changing the API.  "
 			out, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
-				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model, Effort: effort, RequestedMode: tt.mode,
+				ProjectID: "ao", Brief: brief, RequestedAgent: tt.agent, Model: tt.model, Effort: effort, Profile: tt.profile, RequestedMode: tt.mode,
 			})
 			if err != nil {
 				t.Fatalf("DelegateTask: %v", err)
@@ -51,7 +53,7 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			if out.WorkerID != "mer-9" || out.OrchestratorID != "" {
 				t.Fatalf("out = %#v, want worker mer-9 with asynchronous title handoff", out)
 			}
-			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "Fix the renderer wit" {
+			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Profile != tt.profile || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "Fix the renderer wit" {
 				t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)
 			}
 			if cmd.spawnedCfg.AgentConfig.Model != strings.TrimSpace(tt.model) {

@@ -3315,6 +3315,7 @@ export interface components {
             /** @enum {string} */
             mode?: "tui" | "chat";
             model?: string;
+            profile?: string;
             projectId: string;
         };
         DelegateTaskResponse: {

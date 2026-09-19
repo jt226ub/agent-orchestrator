@@ -81,6 +81,21 @@ export type TaskComposerModelControl = {
 	value: string;
 };
 
+export type TaskComposerProfileOption = {
+	id: string;
+	label: string;
+};
+
+export type TaskComposerProfileControl = {
+	disabled: boolean;
+	id: string;
+	label: string;
+	onChange: (value: string) => void;
+	options: TaskComposerProfileOption[];
+	placeholder: string;
+	value: string;
+};
+
 export type TaskComposerAttachment = {
 	id: string;
 	name: string;
@@ -123,8 +138,12 @@ export type TaskComposerViewProps = {
 	labels: TaskComposerLabels;
 	model: Omit<TaskComposerModelControl, "id">;
 	onPromptChange: (value: string) => void;
+	// A project with role profiles gets a leading profile slot; without one the
+	// toolbar keeps its two agent and model tracks.
+	profile?: Omit<TaskComposerProfileControl, "id">;
 	renderAgentControl: (control: TaskComposerAgentControl) => ReactNode;
 	renderModelControl: (control: TaskComposerModelControl) => ReactNode;
+	renderProfileControl?: (control: TaskComposerProfileControl) => ReactNode;
 	submission: TaskComposerSubmission;
 };
 
@@ -198,13 +217,17 @@ export function TaskComposerView({
 	labels,
 	model,
 	onPromptChange,
+	profile,
 	renderAgentControl,
 	renderModelControl,
+	renderProfileControl,
 	submission,
 }: TaskComposerViewProps) {
 	const promptId = useId();
 	const modelId = useId();
 	const agentId = useId();
+	const profileId = useId();
+	const profileSlot = profile && renderProfileControl ? renderProfileControl({ ...profile, id: profileId }) : null;
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const promptRef = useRef(initialPrompt);
 	const prefersReducedMotion = useReducedMotion();
@@ -378,7 +401,13 @@ export function TaskComposerView({
 			)}
 
 			<div className="composer-toolbar">
-				<div className="composer-run-controls" role="group" aria-label={labels.runsWith}>
+				<div className="composer-run-controls" role="group" aria-label={labels.runsWith} data-slots={profileSlot ? "3" : undefined}>
+					{profileSlot ? (
+						<>
+							<div className="composer-toolbar-slot">{profileSlot}</div>
+							<span className="composer-toolbar-divider" aria-hidden="true" />
+						</>
+					) : null}
 					<div className="composer-toolbar-slot">
 						{renderAgentControl({ ...agent, id: agentId })}
 					</div>

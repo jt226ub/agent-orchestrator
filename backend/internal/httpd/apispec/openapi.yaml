@@ -9445,6 +9445,9 @@ components:
         model:
           maxLength: 256
           type: string
+        profile:
+          maxLength: 64
+          type: string
         projectId:
           type: string
       required:

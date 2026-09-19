@@ -22,13 +22,15 @@ const (
 
 // DelegateTaskInput describes a task AO should spawn as a worker session. Brief
 // may be empty to open an idle worker that the user can instruct later. Empty
-// RequestedAgent means the spawn uses the project's worker-agent default.
+// RequestedAgent means the spawn uses the project's worker-agent default;
+// empty Profile means the worker override's profile, if any.
 type DelegateTaskInput struct {
 	ProjectID      domain.ProjectID
 	Brief          string
 	RequestedAgent domain.AgentHarness
 	Model          string
 	Effort         *string
+	Profile        string
 	ApprovalMode   domain.PermissionMode
 	RequestedMode  domain.SessionMode
 	Attachments    []ports.SpawnAttachment
@@ -66,6 +68,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		ProjectID:   in.ProjectID,
 		Kind:        domain.KindWorker,
 		Harness:     in.RequestedAgent,
+		Profile:     in.Profile,
 		Prompt:      prompt,
 		DisplayName: delegatedTaskDisplayName(in.Brief),
 		AgentConfig: ports.AgentConfig{

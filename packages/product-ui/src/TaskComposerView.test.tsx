@@ -121,6 +121,34 @@ describe("TaskComposerView", () => {
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
 	});
 
+	it("adds a leading profile slot only when a profile control is given", () => {
+		const { rerender } = render(<TaskComposerView {...viewProps()} />);
+		const runControls = () => screen.getByRole("group", { name: "Runs with" });
+		expect(runControls().querySelectorAll(".composer-toolbar-slot")).toHaveLength(2);
+		expect(runControls()).not.toHaveAttribute("data-slots");
+
+		const onChange = vi.fn();
+		rerender(
+			<TaskComposerView
+				{...viewProps({
+					profile: { label: "Profile", placeholder: "Select profile", value: "flash-coder", disabled: false, options: [{ id: "flash-coder", label: "flash-coder" }], onChange },
+					renderProfileControl: (control) => (
+						<button type="button" aria-label={control.label} onClick={() => control.onChange("pro-expert")}>
+							{control.value}
+						</button>
+					),
+				})}
+			/>,
+		);
+		expect(runControls()).toHaveAttribute("data-slots", "3");
+		const slots = runControls().querySelectorAll(".composer-toolbar-slot");
+		expect(slots).toHaveLength(3);
+		expect(slots[0]).toContainElement(screen.getByRole("button", { name: "Profile" }));
+		expect(runControls().querySelectorAll(".composer-toolbar-divider")).toHaveLength(2);
+		fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+		expect(onChange).toHaveBeenCalledWith("pro-expert");
+	});
+
 	it("claims the caret when asked to autofocus, and reclaims it from a surface that steals it", async () => {
 		render(<TaskComposerView {...viewProps({ autoFocusPrompt: true })} />);
 		const prompt = screen.getByRole("textbox", { name: "Task" });

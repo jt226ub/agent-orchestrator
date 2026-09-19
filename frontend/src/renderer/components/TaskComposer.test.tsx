@@ -894,6 +894,72 @@ describe("TaskComposer", () => {
 		expect(screen.getByText("Configure the model in opencode, then refresh.")).toBeInTheDocument();
 	});
 
+	it("preselects the worker profile, names the active template, and delegates with the profile", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return { data: { agent: "codex", selectionMode: "text", models: [], allowCustom: true, refreshRecommended: false } };
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						agent: "claude-code",
+						config: {
+							worker: { profile: "flash-coder" },
+							profiles: {
+								"flash-coder": { agent: "codex", agentConfig: { model: "flash-model" } },
+								"pro-expert": { agent: "claude-code" },
+							},
+							templates: { "flash-first": { worker: "flash-coder" } },
+							template: "flash-first",
+						},
+					},
+				},
+			};
+		});
+		h.post.mockResolvedValue({ data: { workerId: "sess-4" } });
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		// The profile supplies the agent, and the chip says which template bound it.
+		const profileChip = await screen.findByRole("button", { name: "Profile" });
+		expect(profileChip).toHaveTextContent("flash-coder · flash-first");
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "codex"));
+		expect(screen.getByRole("group", { name: "Runs with" }).querySelectorAll(".composer-toolbar-slot")).toHaveLength(3);
+
+		fireEvent.change(task(), { target: { value: "Ship it" } });
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith(
+				"/api/v1/orchestrators/delegate",
+				expect.objectContaining({ body: expect.objectContaining({ agent: "codex", profile: "flash-coder" }) }),
+			),
+		);
+		// The profile's model is the default, so no explicit model override is sent.
+		expect(h.post.mock.calls[0][1].body).not.toHaveProperty("model");
+
+		// Picking another profile moves the agent with it.
+		await userEvent.click(profileChip);
+		await userEvent.click(await screen.findByRole("menuitem", { name: "pro-expert" }));
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "claude-code"));
+		fireEvent.change(task(), { target: { value: "Review it" } });
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(2));
+		expect(h.post.mock.calls[1][1].body).toMatchObject({ agent: "claude-code", profile: "pro-expert" });
+
+		// "No profile" falls back to the project's own defaults and sends none.
+		await userEvent.click(screen.getByRole("button", { name: "Profile" }));
+		await userEvent.click(await screen.findByRole("menuitem", { name: "No profile" }));
+		fireEvent.change(task(), { target: { value: "Plain" } });
+		fireEvent.click(screen.getByText("Start task"));
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(3));
+		expect(h.post.mock.calls[2][1].body).not.toHaveProperty("profile");
+	}, 20_000);
+
 	it("uses the project worker model as the new task model default", async () => {
 		h.get.mockImplementation(async (path: string) => {
 			if (path.includes("/models")) {
