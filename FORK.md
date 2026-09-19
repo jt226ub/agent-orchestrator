@@ -24,5 +24,7 @@ in the LLM Drive Skill repository, `modules/ao-fork/DESIGN.md` (decision D22 the
 4. **Upstream stays the engine.** No rewrites of the daemon, the Kanban or the adapters;
    additions are new files or small named seams so `git rebase upstream/main` stays cheap.
    `upstream` is the remote for `Untrivial-ai/agent-orchestrator`; `main` tracks it, work
-   lives on `feat/*` branches.
+   lives on `feat/*` branches. `fork/main` is `main` plus every landed `feat/*` branch
+   merged in order; a branch that needs an earlier one starts from `fork/main` and its PR
+   targets `fork/main`, so each PR's diff stays one feature.
 5. **Out of scope for now:** the Kaggle TPU provider and its time budget.
