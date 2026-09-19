@@ -1206,8 +1206,8 @@ func (e *Engine) projectReviewerSelection(
 			cfg = proj.Config
 		}
 	}
-	if len(cfg.Reviewers) > 0 {
-		return cfg.Reviewers[0].Harness, cfg.Reviewers[0].AgentConfig, nil
+	if reviewers := cfg.ResolveReviewers(); len(reviewers) > 0 {
+		return reviewers[0].Harness, reviewers[0].AgentConfig, nil
 	}
 	return cfg.ResolveReviewerHarness(worker.Harness), domain.AgentConfig{}, nil
 }

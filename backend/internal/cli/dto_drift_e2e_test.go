@@ -168,6 +168,11 @@ func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, i
 	return projectsvc.Project{ID: id, Config: &cfg}, nil
 }
 
+func (f *fakeProjectManager) ApplyTemplate(_ context.Context, id domain.ProjectID, in projectsvc.ApplyTemplateInput) (projectsvc.Project, error) {
+	cfg := domain.ProjectConfig{Template: in.Template}
+	return projectsvc.Project{ID: id, Config: &cfg}, nil
+}
+
 func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
 	return projectsvc.RemoveResult{}, nil
 }

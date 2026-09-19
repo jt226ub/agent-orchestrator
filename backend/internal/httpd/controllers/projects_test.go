@@ -445,6 +445,47 @@ func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
 	}
 }
 
+func TestProjectsAPI_ApplyTemplate(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "apply-template")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"tpl"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/tpl/config", `{"config":{"profiles":{"flash-coder":{"agent":"agy"}},"templates":{"flash-first":{"worker":"flash-coder"}}}}`)
+	if status != http.StatusOK {
+		t.Fatalf("set config = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/tpl/config/template", `{"template":"flash-first"}`)
+	if status != http.StatusOK {
+		t.Fatalf("apply = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		Project struct {
+			Config struct {
+				Template string `json:"template"`
+				Worker   struct {
+					Profile string `json:"profile"`
+				} `json:"worker"`
+			} `json:"config"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	if got.Project.Config.Template != "flash-first" || got.Project.Config.Worker.Profile != "flash-coder" {
+		t.Fatalf("applied config = %s", body)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/tpl/config/template", `{"template":"missing"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNKNOWN_TEMPLATE")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/tpl/config/template", `{"template":"flash-first","surprise":"!"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/nope/config/template", `{"template":"flash-first"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
+}
+
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 
 	srv := newTestServer(t)

@@ -1569,6 +1569,23 @@ func TestReviewerSelectionMergesSessionConfigWithProjectReviewerConfig(t *testin
 	}
 }
 
+func TestReviewerSelectionFollowsReviewerProfile(t *testing.T) {
+	worker := liveWorker()
+	// The reviewer entry's inline snapshot is stale; the profile it names is current.
+	eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{cfg: domain.ProjectConfig{
+		Profiles:  map[string]domain.RoleProfile{"pro-expert": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.1-pro-high"}}},
+		Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerCodex, AgentConfig: domain.AgentConfig{Model: "stale"}, Profile: "pro-expert"}},
+	}}, &fakeLauncher{})
+
+	harness, config, err := eng.reviewerSelection(context.Background(), worker)
+	if err != nil {
+		t.Fatalf("reviewerSelection: %v", err)
+	}
+	if harness != domain.ReviewerAgy || config.Model != "gemini-3.1-pro-high" {
+		t.Fatalf("selection = %q %+v, want the profile's harness and model", harness, config)
+	}
+}
+
 func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},

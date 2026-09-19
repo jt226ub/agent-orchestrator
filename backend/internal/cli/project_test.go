@@ -308,6 +308,62 @@ func TestProjectSetConfig_ReviewerFlags(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_TemplatesJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"profiles":{"flash-coder":{"agent":"agy"},"pro-expert":{"agent":"agy"}},"templates":{"flash-first":{"worker":"flash-coder","reviewers":["pro-expert"],"orchestratorRulesFile":"rules/plan.md"}},"template":"flash-first","reviewers":[{"harness":"agy","profile":"pro-expert"}]}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	tpl, ok := got.Config.Templates["flash-first"]
+	if !ok || tpl.Worker != "flash-coder" || len(tpl.Reviewers) != 1 || tpl.Reviewers[0] != "pro-expert" || tpl.OrchestratorRulesFile != "rules/plan.md" || got.Config.Template != "flash-first" {
+		t.Fatalf("templates config = %#v active %q, want the template preserved", got.Config.Templates, got.Config.Template)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Profile != "pro-expert" {
+		t.Fatalf("reviewers config = %#v, want the reviewer profile preserved", got.Config.Reviewers)
+	}
+}
+
+func TestProjectApplyTemplate(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","config":{"template":"flash-first"}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "apply-template", "demo", "flash-first")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPost || capture.path != "/api/v1/projects/demo/config/template" {
+		t.Fatalf("request = %s %s, want POST /api/v1/projects/demo/config/template", capture.method, capture.path)
+	}
+	var got applyTemplateRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if got.Template != "flash-first" {
+		t.Fatalf("template = %q, want flash-first", got.Template)
+	}
+	if !strings.Contains(out, "applied template flash-first to project demo") {
+		t.Fatalf("stdout = %q", out)
+	}
+
+	for _, args := range [][]string{{"project", "apply-template", "demo"}, {"project", "apply-template", "demo", " "}} {
+		if _, _, err := executeCLI(t, Deps{}, args...); err == nil || ExitCode(err) != 2 {
+			t.Fatalf("%v: err = %v, want usage error", args, err)
+		}
+	}
+}
+
 func TestProjectRemove_RequiresID(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, Deps{}, "project", "rm")

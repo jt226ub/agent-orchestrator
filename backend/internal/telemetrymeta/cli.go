@@ -140,6 +140,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao project add":            {},
 	"ao project rm":             {},
 	"ao project set-config":     {},
+	"ao project apply-template": {},
 	"ao review":                 {},
 	"ao review cancel":          {},
 	"ao review ls":              {},

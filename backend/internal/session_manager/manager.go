@@ -4202,8 +4202,9 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		return "", err
 	}
 	// Standing rules are layered general to specific: the operating contract the
-	// daemon carries for every session, the project's own rules, then the role
-	// profile's rules file, which is the most specific text the agent reads.
+	// daemon carries for every session, the project's own rules, the role
+	// profile's rules file, and for orchestrators the active template's plan,
+	// which is the most specific text the agent reads.
 	contract := m.contractRules()
 	profileRulesFile := project.Config.ProfileRulesFile(profile)
 	cfg := systemPromptConfig{
@@ -4215,10 +4216,11 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	switch kind {
 	case domain.KindOrchestrator:
 		rules, err := buildProjectRules(projectRulesConfig{
-			ProjectPath:      project.Path,
-			Contract:         contract,
-			AgentRules:       project.Config.OrchestratorRules,
-			ProfileRulesFile: profileRulesFile,
+			ProjectPath:       project.Path,
+			Contract:          contract,
+			AgentRules:        project.Config.OrchestratorRules,
+			ProfileRulesFile:  profileRulesFile,
+			TemplateRulesFile: project.Config.TemplateRulesFile(),
 		})
 		if err != nil {
 			return "", err

@@ -4788,6 +4788,52 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestrator_TemplatePlanLayersLast(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"orchestrator.md": "Profile rule.\n", "plan.md": "Plan: small tasks to flash-coder.\n"} {
+		if err := os.WriteFile(filepath.Join(projectDir, "rules", name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := testRoleAgents()
+	cfg.OrchestratorRules = "Coordinate through workers."
+	cfg.Profiles = map[string]domain.RoleProfile{"orchestrator": {RulesFile: "rules/orchestrator.md"}}
+	cfg.Templates = map[string]domain.WorkflowTemplate{"flash-first": {Orchestrator: "orchestrator", OrchestratorRulesFile: "rules/plan.md"}}
+	var err error
+	if cfg, err = cfg.ApplyTemplate("flash-first"); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectDir, Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	last := -1
+	for _, want := range []string{"Coordinate through workers.", "Profile rule.", "Plan: small tasks to flash-coder."} {
+		at := strings.Index(systemPrompt, want)
+		if at < 0 || at < last {
+			t.Fatalf("orchestrator rules not layered project, profile, template plan (missing or misplaced %q):\n%s", want, systemPrompt)
+		}
+		last = at
+	}
+
+	// A worker on the same project never sees the orchestrator's plan.
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(agent.lastLaunch.SystemPrompt, "Plan: small tasks") {
+		t.Fatalf("template plan leaked into a worker prompt:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+}
+
 func TestSpawnOrchestrator_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}

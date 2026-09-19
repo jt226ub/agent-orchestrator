@@ -67,6 +67,12 @@ type SetConfigInput struct {
 	Config domain.ProjectConfig `json:"config"`
 }
 
+// ApplyTemplateInput is the body shape for POST /api/v1/projects/{id}/config/template:
+// the name of a `templates` entry whose profiles bind to the role slots.
+type ApplyTemplateInput struct {
+	Template string `json:"template" maxLength:"64"`
+}
+
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.
 type RemoveResult struct {
 	ProjectID         domain.ProjectID `json:"projectId"`

@@ -52,6 +52,9 @@ type Manager interface {
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
 	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
+	// ApplyTemplate binds a workflow template's profiles to the project's role
+	// slots, leaving the rest of the config as it is.
+	ApplyTemplate(ctx context.Context, id domain.ProjectID, in ApplyTemplateInput) (Project, error)
 
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
@@ -749,6 +752,40 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 	row.Config = in.Config
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
+	}
+	return m.projectFromRow(ctx, row), nil
+}
+
+// ApplyTemplate rebinds the role slots from the named template (see
+// domain.ProjectConfig.ApplyTemplate) and stores the result. The bound config
+// is validated like a set, so a template that leads to an invalid config (a
+// reviewer on a scratch project, say) is refused without a write.
+func (m *Service) ApplyTemplate(ctx context.Context, id domain.ProjectID, in ApplyTemplateInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	cfg, err := row.Config.ApplyTemplate(in.Template)
+	if err != nil {
+		return Project{}, apierr.Invalid("UNKNOWN_TEMPLATE", err.Error(), nil)
+	}
+	if err := cfg.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	if row.Kind.WithDefault() == domain.ProjectKindScratch {
+		if err := validateScratchProjectConfig(cfg); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+	}
+	row.Config = cfg
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}

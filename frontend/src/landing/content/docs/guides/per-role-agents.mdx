@@ -63,7 +63,26 @@ A profile is a named bundle a role or a single spawn can name instead of repeati
 }
 ```
 
-The session remembers its profile, so a restore folds the same bundle back in. Standing rules are layered general to specific: the daemon's operating contract when `<data dir>/rules/contract.md` exists, the project's rules, then the profile's rules file.
+The session remembers its profile, so a restore folds the same bundle back in. Standing rules are layered general to specific: the daemon's operating contract when `<data dir>/rules/contract.md` exists, the project's rules, then the profile's rules file. A reviewer entry can name a profile too (`"reviewers": [{ "harness": "agy", "profile": "pro-expert" }]`); the profile's harness and agent config are read at review time, so editing the profile reaches the next review.
+
+## Workflow templates
+
+A template names which profile fills each role slot, plus the orchestrator's delegation plan, so "Flash implements, Pro reviews" is one switch rather than three edits. Define templates under `templates` and bind one with `ao project apply-template <project-id> <name>` (or the Templates tab in project settings): the worker and orchestrator slots take the template's profiles, the reviewer list is replaced by its reviewer profiles, and `template` records which one is active. A template never changes a profile.
+
+```json
+{
+  "templates": {
+    "flash-first": {
+      "orchestrator": "orchestrator",
+      "worker": "flash-coder",
+      "reviewers": ["pro-expert"],
+      "orchestratorRulesFile": "rules/plan-flash-first.md"
+    }
+  }
+}
+```
+
+While a template is active, its `orchestratorRulesFile` is appended last to the orchestrator's standing rules: the plan that tells the orchestrator which profile takes which kind of task, in your words, so the per-task choice stays the orchestrator's.
 
 Pass the object itself with `ao project set-config <project-id> --config-json '<json-object>'`; the flag does not read a file. This replaces the project config, so preserve any existing setup, rules, reviewers, or intake fields.
 

@@ -2067,6 +2067,45 @@ func TestManager_SetPermissionsPreservesConfig(t *testing.T) {
 	}
 }
 
+func TestManager_ApplyTemplate(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := domain.ProjectConfig{
+		SessionPrefix: "keep",
+		Worker:        domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		Profiles: map[string]domain.RoleProfile{
+			"flash-coder": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.8-flash-high"}},
+			"pro-expert":  {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.1-pro-high"}},
+		},
+		Templates: map[string]domain.WorkflowTemplate{"flash-first": {Worker: "flash-coder", Reviewers: []string{"pro-expert"}}},
+	}
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ApplyTemplate(ctx, "ao", project.ApplyTemplateInput{Template: "flash-first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := cfg.ApplyTemplate("flash-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config == nil || !reflect.DeepEqual(*got.Config, want) {
+		t.Fatalf("applied config = %#v, want %#v", got.Config, want)
+	}
+	// The bind is durable and nothing else moved.
+	if again, err := m.Get(ctx, "ao"); err != nil || again.Project.Config == nil || again.Project.Config.Template != "flash-first" || again.Project.Config.SessionPrefix != "keep" || again.Project.Config.Worker.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("stored config = %#v (%v)", again.Project.Config, err)
+	}
+	_, err = m.ApplyTemplate(ctx, "ao", project.ApplyTemplateInput{Template: "missing"})
+	wantCode(t, err, "UNKNOWN_TEMPLATE")
+	_, err = m.ApplyTemplate(ctx, "missing", project.ApplyTemplateInput{Template: "flash-first"})
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
 func TestManager_RememberPortablePermissions(t *testing.T) {
 	m := newManager(t)
 	ctx := context.Background()

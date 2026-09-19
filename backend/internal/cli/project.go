@@ -107,6 +107,15 @@ type trackerIntakeConfig struct {
 type reviewerConfig struct {
 	Harness     string       `json:"harness"`
 	AgentConfig *agentConfig `json:"agentConfig,omitempty"`
+	Profile     string       `json:"profile,omitempty"`
+}
+
+// workflowTemplate mirrors domain.WorkflowTemplate.
+type workflowTemplate struct {
+	Orchestrator          string   `json:"orchestrator,omitempty"`
+	Worker                string   `json:"worker,omitempty"`
+	Reviewers             []string `json:"reviewers,omitempty"`
+	OrchestratorRulesFile string   `json:"orchestratorRulesFile,omitempty"`
 }
 
 type containerReapConfig struct {
@@ -117,29 +126,37 @@ type containerReapConfig struct {
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	ContainerReap     *containerReapConfig   `json:"containerReap,omitempty"`
-	CanonicalRepoURL  string                 `json:"canonicalRepoURL,omitempty"`
-	DefaultBranch     string                 `json:"defaultBranch,omitempty"`
-	SessionPrefix     string                 `json:"sessionPrefix,omitempty"`
-	Env               map[string]string      `json:"env,omitempty"`
-	Symlinks          []string               `json:"symlinks,omitempty"`
-	PostCreate        []string               `json:"postCreate,omitempty"`
-	AgentRules        string                 `json:"agentRules,omitempty"`
-	AgentRulesFile    string                 `json:"agentRulesFile,omitempty"`
-	OrchestratorRules string                 `json:"orchestratorRules,omitempty"`
-	AgentConfig       agentConfig            `json:"agentConfig,omitempty"`
-	Worker            roleOverride           `json:"worker,omitempty"`
-	Orchestrator      roleOverride           `json:"orchestrator,omitempty"`
-	Profiles          map[string]roleProfile `json:"profiles,omitempty"`
-	TrackerIntake     trackerIntakeConfig    `json:"trackerIntake,omitempty"`
-	AutoReview        bool                   `json:"autoReview,omitempty"`
-	Reviewers         []reviewerConfig       `json:"reviewers,omitempty"`
+	ContainerReap     *containerReapConfig        `json:"containerReap,omitempty"`
+	CanonicalRepoURL  string                      `json:"canonicalRepoURL,omitempty"`
+	DefaultBranch     string                      `json:"defaultBranch,omitempty"`
+	SessionPrefix     string                      `json:"sessionPrefix,omitempty"`
+	Env               map[string]string           `json:"env,omitempty"`
+	Symlinks          []string                    `json:"symlinks,omitempty"`
+	PostCreate        []string                    `json:"postCreate,omitempty"`
+	AgentRules        string                      `json:"agentRules,omitempty"`
+	AgentRulesFile    string                      `json:"agentRulesFile,omitempty"`
+	OrchestratorRules string                      `json:"orchestratorRules,omitempty"`
+	AgentConfig       agentConfig                 `json:"agentConfig,omitempty"`
+	Worker            roleOverride                `json:"worker,omitempty"`
+	Orchestrator      roleOverride                `json:"orchestrator,omitempty"`
+	Profiles          map[string]roleProfile      `json:"profiles,omitempty"`
+	Templates         map[string]workflowTemplate `json:"templates,omitempty"`
+	Template          string                      `json:"template,omitempty"`
+	TrackerIntake     trackerIntakeConfig         `json:"trackerIntake,omitempty"`
+	AutoReview        bool                        `json:"autoReview,omitempty"`
+	Reviewers         []reviewerConfig            `json:"reviewers,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
 // PUT /api/v1/projects/{id}/config.
 type setConfigRequest struct {
 	Config projectConfig `json:"config"`
+}
+
+// applyTemplateRequest mirrors the daemon's ApplyTemplateInput body for
+// POST /api/v1/projects/{id}/config/template.
+type applyTemplateRequest struct {
+	Template string `json:"template"`
 }
 
 type projectSetConfigOptions struct {
@@ -196,6 +213,7 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectGetCommand(ctx))
 	cmd.AddCommand(newProjectAddCommand(ctx))
 	cmd.AddCommand(newProjectSetConfigCommand(ctx))
+	cmd.AddCommand(newProjectApplyTemplateCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
 	return cmd
 }
@@ -306,7 +324,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		Use:   "set-config <id>",
 		Short: "Set the per-project config",
 		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, rules, agent model/permissions, role overrides, role profiles, tracker intake, reviewers). The config " +
+			"symlinks, post-create, rules, agent model/permissions, role overrides, role profiles, workflow templates, tracker intake, reviewers). The config " +
 			"is resolved when a session spawns.\n\n" +
 			"Set fields via flags, pass the whole object with --config-json, or --clear " +
 			"to remove all config.",
@@ -346,7 +364,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
 	f.StringVar(&opts.workerProfile, "worker-profile", "", "Role profile (a profiles entry) folded into worker sessions; define profiles with --config-json")
-	f.StringVar(&opts.orchestratorProfile, "orchestrator-profile", "", "Role profile (a profiles entry) folded into orchestrator sessions; define profiles with --config-json")
+	f.StringVar(&opts.orchestratorProfile, "orchestrator-profile", "", "Role profile (a profiles entry) folded into orchestrator sessions; define profiles and templates with --config-json")
 	f.StringVar(&opts.agentRules, "agent-rules", "", "Project-specific standing instructions for worker sessions")
 	f.StringVar(&opts.agentRulesFile, "agent-rules-file", "", "Repo-relative file containing worker standing instructions")
 	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
@@ -360,6 +378,41 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
+	return cmd
+}
+
+func newProjectApplyTemplateCommand(ctx *commandContext) *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "apply-template <id> <template>",
+		Short: "Bind a workflow template's profiles to the project's role slots",
+		Long: "Bind the named template (a templates entry set with `set-config --config-json`) " +
+			"to the project: the worker and orchestrator slots take its profiles, the reviewer " +
+			"list is replaced by its reviewer profiles, and the template becomes the active one. " +
+			"Nothing else in the config moves.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			if strings.TrimSpace(args[0]) == "" || strings.TrimSpace(args[1]) == "" {
+				return usageError{errors.New("usage: project id and template name are required")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, name := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
+			var res projectResult
+			if err := ctx.postJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/config/template", applyTemplateRequest{Template: name}, &res); err != nil {
+				return err
+			}
+			if jsonOut {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "applied template %s to project %s\n", name, res.Project.ID)
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output the updated project as JSON")
 	return cmd
 }
 

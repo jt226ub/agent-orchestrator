@@ -55,6 +55,14 @@ type ProjectConfig struct {
 	// and folded into the role override; the session remembers its name so a
 	// restore reapplies the same bundle.
 	Profiles map[string]RoleProfile `json:"profiles,omitempty"`
+	// Templates are named assignments of profiles to the role slots (worker,
+	// orchestrator, reviewers) plus the orchestrator's delegation plan.
+	// ApplyTemplate binds one in a single step; a template never changes a profile.
+	Templates map[string]WorkflowTemplate `json:"templates,omitempty"`
+	// Template is the name of the template last applied, so the desktop and the
+	// orchestrator prompt know which plan is in force. Editing a slot by hand
+	// leaves the name in place; reapplying rebinds the slots.
+	Template string `json:"template,omitempty"`
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
@@ -95,11 +103,60 @@ type ContainerReapConfig struct {
 type ReviewerConfig struct {
 	Harness     ReviewerHarness `json:"harness"`
 	AgentConfig AgentConfig     `json:"agentConfig,omitempty"`
+	// Profile names a ProjectConfig.Profiles entry the reviewer follows: at
+	// review time the profile's harness and agent config win over the inline
+	// fields, which ApplyTemplate fills as a snapshot for display.
+	Profile string `json:"profile,omitempty"`
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
 // and the worker's harness is not itself a supported reviewer.
 const FallbackReviewerHarness = ReviewerClaudeCode
+
+// ResolveReviewers returns the reviewer list with each profile-bound entry
+// resolved against the current profile (the profile's set fields win over the
+// inline snapshot), so a profile edit reaches the next review without
+// reapplying the template. Unknown profile names keep the snapshot; Validate
+// refuses them when the config is set.
+func (c ProjectConfig) ResolveReviewers() []ReviewerConfig {
+	if len(c.Reviewers) == 0 {
+		return nil
+	}
+	out := make([]ReviewerConfig, len(c.Reviewers))
+	for i, rv := range c.Reviewers {
+		out[i] = rv.resolved(c.Profiles)
+	}
+	return out
+}
+
+func (rv ReviewerConfig) resolved(profiles map[string]RoleProfile) ReviewerConfig {
+	profile, ok := profiles[strings.TrimSpace(rv.Profile)]
+	if !ok {
+		return rv
+	}
+	if profile.Harness != "" {
+		rv.Harness = ReviewerHarness(profile.Harness)
+	}
+	rv.AgentConfig = mergeAgentConfig(rv.AgentConfig, profile.AgentConfig)
+	return rv
+}
+
+// mergeAgentConfig returns base with override's set fields applied.
+func mergeAgentConfig(base, override AgentConfig) AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.Effort != "" {
+		base.Effort = override.Effort
+	}
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
+}
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
 // reviewer wins. Otherwise only the original, unattended-safe reviewer set is
@@ -180,18 +237,7 @@ func (c ProjectConfig) WithProfile(kind SessionKind, name string) (ProjectConfig
 	if profile.Harness != "" {
 		role.Harness = profile.Harness
 	}
-	if profile.AgentConfig.Model != "" {
-		role.AgentConfig.Model = profile.AgentConfig.Model
-	}
-	if profile.AgentConfig.Effort != "" {
-		role.AgentConfig.Effort = profile.AgentConfig.Effort
-	}
-	if profile.AgentConfig.Mode != "" {
-		role.AgentConfig.Mode = profile.AgentConfig.Mode
-	}
-	if profile.AgentConfig.Permissions != "" {
-		role.AgentConfig.Permissions = profile.AgentConfig.Permissions
-	}
+	role.AgentConfig = mergeAgentConfig(role.AgentConfig, profile.AgentConfig)
 	role.Profile = name
 	if kind == KindOrchestrator {
 		c.Orchestrator = role
@@ -216,6 +262,74 @@ func (c ProjectConfig) WithProfile(kind SessionKind, name string) (ProjectConfig
 func (c ProjectConfig) ProfileRulesFile(name string) string {
 	if profile, ok := c.Profiles[strings.TrimSpace(name)]; ok {
 		return strings.TrimSpace(profile.RulesFile)
+	}
+	return ""
+}
+
+// WorkflowTemplate is one named entry in ProjectConfig.Templates: which profile
+// fills each role slot, and the orchestrator's delegation plan. Every field is
+// optional; an empty slot unbinds that role's profile when the template is
+// applied, so a template always describes the whole assignment.
+type WorkflowTemplate struct {
+	Orchestrator string   `json:"orchestrator,omitempty"`
+	Worker       string   `json:"worker,omitempty"`
+	Reviewers    []string `json:"reviewers,omitempty"`
+	// OrchestratorRulesFile is a repo-relative file appended last to the
+	// orchestrator's standing rules while the template is active: the plan that
+	// says which profile takes which kind of task.
+	OrchestratorRulesFile string `json:"orchestratorRulesFile,omitempty"`
+}
+
+// ApplyTemplate binds the named template's profiles to the role slots: the
+// worker and orchestrator overrides take the template's profile names (an
+// empty name unbinds the slot's profile and keeps its inline fields), the
+// reviewer list is replaced by the template's reviewer profiles (harness and
+// agent config copied as a display snapshot, resolved live by
+// ResolveReviewers), and Template records the name. Profiles are not changed.
+// An unknown template, or a template naming an unknown profile, is an error.
+func (c ProjectConfig) ApplyTemplate(name string) (ProjectConfig, error) {
+	name = strings.TrimSpace(name)
+	tpl, ok := c.Templates[name]
+	if !ok {
+		return c, fmt.Errorf("template %q is not defined in the project config", name)
+	}
+	for _, slot := range []struct{ role, profile string }{{"worker", tpl.Worker}, {"orchestrator", tpl.Orchestrator}} {
+		if p := strings.TrimSpace(slot.profile); p != "" {
+			if _, ok := c.Profiles[p]; !ok {
+				return c, fmt.Errorf("template %q: %s names unknown profile %q", name, slot.role, p)
+			}
+		}
+	}
+	reviewers := make([]ReviewerConfig, 0, len(tpl.Reviewers))
+	for _, p := range tpl.Reviewers {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		profile, ok := c.Profiles[p]
+		if !ok {
+			return c, fmt.Errorf("template %q: reviewers names unknown profile %q", name, p)
+		}
+		if profile.Harness == "" {
+			return c, fmt.Errorf("template %q: reviewer profile %q sets no agent", name, p)
+		}
+		reviewers = append(reviewers, ReviewerConfig{Harness: ReviewerHarness(profile.Harness), AgentConfig: profile.AgentConfig, Profile: p})
+	}
+	c.Worker.Profile = strings.TrimSpace(tpl.Worker)
+	c.Orchestrator.Profile = strings.TrimSpace(tpl.Orchestrator)
+	if len(reviewers) == 0 {
+		reviewers = nil
+	}
+	c.Reviewers = reviewers
+	c.Template = name
+	return c, nil
+}
+
+// TemplateRulesFile returns the active template's orchestrator plan file, or
+// "" when no template is active or it sets none.
+func (c ProjectConfig) TemplateRulesFile() string {
+	if tpl, ok := c.Templates[strings.TrimSpace(c.Template)]; ok {
+		return strings.TrimSpace(tpl.OrchestratorRulesFile)
 	}
 	return ""
 }
@@ -310,6 +424,38 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
 		}
 	}
+	for name, tpl := range c.Templates {
+		if err := validateNameComponent("templates."+name, name); err != nil {
+			return err
+		}
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
+			return fmt.Errorf("templates: name %q must be non-empty without surrounding whitespace", name)
+		}
+		for slot, profile := range map[string]string{"worker": tpl.Worker, "orchestrator": tpl.Orchestrator} {
+			if p := strings.TrimSpace(profile); p != "" {
+				if _, ok := c.Profiles[p]; !ok {
+					return fmt.Errorf("templates.%s.%s: unknown profile %q", name, slot, p)
+				}
+			}
+		}
+		for i, p := range tpl.Reviewers {
+			profile, ok := c.Profiles[strings.TrimSpace(p)]
+			if !ok {
+				return fmt.Errorf("templates.%s.reviewers[%d]: unknown profile %q", name, i, p)
+			}
+			if !ReviewerHarness(profile.Harness).IsKnown() {
+				return fmt.Errorf("templates.%s.reviewers[%d]: profile %q agent %q cannot review", name, i, p, profile.Harness)
+			}
+		}
+		if err := validateRepoRelative(tpl.OrchestratorRulesFile); err != nil {
+			return fmt.Errorf("templates.%s.orchestratorRulesFile %q: %w", name, tpl.OrchestratorRulesFile, err)
+		}
+	}
+	if name := strings.TrimSpace(c.Template); name != "" {
+		if _, ok := c.Templates[name]; !ok {
+			return fmt.Errorf("template: unknown template %q", name)
+		}
+	}
 	for _, s := range c.Symlinks {
 		if err := validateRepoRelative(s); err != nil {
 			return fmt.Errorf("symlink %q: %w", s, err)
@@ -324,6 +470,15 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := rv.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("reviewers[%d].agentConfig: %w", i, err)
+		}
+		if p := strings.TrimSpace(rv.Profile); p != "" {
+			profile, ok := c.Profiles[p]
+			if !ok {
+				return fmt.Errorf("reviewers[%d].profile: unknown profile %q", i, p)
+			}
+			if profile.Harness != "" && !ReviewerHarness(profile.Harness).IsKnown() {
+				return fmt.Errorf("reviewers[%d].profile: profile %q agent %q cannot review", i, p, profile.Harness)
+			}
 		}
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {

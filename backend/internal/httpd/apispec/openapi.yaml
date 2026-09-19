@@ -2209,6 +2209,51 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/config/template:
+    post:
+      operationId: applyProjectTemplate
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyTemplateInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Bind a workflow template's profiles to the project's role slots
+      tags:
+      - projects
   /api/v1/projects/{id}/permissions:
     patch:
       operationId: setProjectPermissions
@@ -9506,6 +9551,8 @@ components:
           $ref: '#/components/schemas/AgentConfig'
         harness:
           type: string
+        profile:
+          type: string
       required:
       - harness
       type: object
@@ -10599,6 +10646,14 @@ components:
       - defaultBranch
       - folderMissing
       type: object
+    ProjectApplyTemplateInput:
+      properties:
+        template:
+          maxLength: 64
+          type: string
+      required:
+      - template
+      type: object
     ProjectClonePreparationCleanupInput:
       properties:
         path:
@@ -10653,6 +10708,12 @@ components:
           items:
             type: string
           type: array
+        template:
+          type: string
+        templates:
+          additionalProperties:
+            $ref: '#/components/schemas/WorkflowTemplate'
+          type: object
         trackerIntake:
           $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
@@ -12480,6 +12541,19 @@ components:
       - processedTokens
       - cacheReadTokens
       - estimatedCost
+      type: object
+    WorkflowTemplate:
+      properties:
+        orchestrator:
+          type: string
+        orchestratorRulesFile:
+          type: string
+        reviewers:
+          items:
+            type: string
+          type: array
+        worker:
+          type: string
       type: object
     WorkspaceCommitSummary:
       properties:

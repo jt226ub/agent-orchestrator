@@ -45,8 +45,12 @@ type projectRulesConfig struct {
 	Contract       string
 	AgentRules     string
 	AgentRulesFile string
-	// ProfileRulesFile is the role profile's repo-relative rules file, placed last.
+	// ProfileRulesFile is the role profile's repo-relative rules file, placed
+	// after the project's own rules.
 	ProfileRulesFile string
+	// TemplateRulesFile is the active workflow template's repo-relative plan
+	// file for orchestrators, placed last.
+	TemplateRulesFile string
 }
 
 func buildTaskPrompt(cfg taskPromptConfig) string {
@@ -147,33 +151,39 @@ func buildProjectRules(cfg projectRulesConfig) (string, error) {
 	if rules := strings.TrimSpace(cfg.AgentRules); rules != "" {
 		parts = append(parts, rules)
 	}
-	if rel := strings.TrimSpace(cfg.AgentRulesFile); rel != "" {
-		path, err := projectRelativeFile(cfg.ProjectPath, rel)
+	for _, file := range []struct{ label, rel string }{
+		{"agentRulesFile", cfg.AgentRulesFile},
+		{"profile rulesFile", cfg.ProfileRulesFile},
+		{"template orchestratorRulesFile", cfg.TemplateRulesFile},
+	} {
+		rules, err := readProjectRulesFile(cfg.ProjectPath, file.label, file.rel)
 		if err != nil {
-			return "", fmt.Errorf("agentRulesFile: %w", err)
+			return "", err
 		}
-		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
-		if err != nil {
-			return "", fmt.Errorf("read agentRulesFile %s: %w", rel, err)
-		}
-		if rules := strings.TrimSpace(string(data)); rules != "" {
-			parts = append(parts, rules)
-		}
-	}
-	if rel := strings.TrimSpace(cfg.ProfileRulesFile); rel != "" {
-		path, err := projectRelativeFile(cfg.ProjectPath, rel)
-		if err != nil {
-			return "", fmt.Errorf("profile rulesFile: %w", err)
-		}
-		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
-		if err != nil {
-			return "", fmt.Errorf("read profile rulesFile %s: %w", rel, err)
-		}
-		if rules := strings.TrimSpace(string(data)); rules != "" {
+		if rules != "" {
 			parts = append(parts, rules)
 		}
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// readProjectRulesFile returns the trimmed contents of a repo-relative rules
+// file, "" for an empty path, and an error naming the config field for a
+// missing or unreadable file.
+func readProjectRulesFile(projectPath, label, rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", nil
+	}
+	path, err := projectRelativeFile(projectPath, rel)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", label, err)
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
+	if err != nil {
+		return "", fmt.Errorf("read %s %s: %w", label, rel, err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 func projectRelativeFile(projectPath, rel string) (string, error) {

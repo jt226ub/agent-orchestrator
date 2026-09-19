@@ -126,7 +126,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, role profiles, worker rules, and orchestrator rules). The config is resolved when a session spawns. Profiles are named bundles of harness, agent config, a repo-relative rules file and environment, defined under `profiles` in `--config-json` and named by `worker.profile`, `orchestrator.profile` or `ao spawn --profile`. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
+Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, role profiles, workflow templates, worker rules, and orchestrator rules). The config is resolved when a session spawns. Profiles are named bundles of harness, agent config, a repo-relative rules file and environment, defined under `profiles` in `--config-json` and named by `worker.profile`, `orchestrator.profile`, a reviewer's `profile` or `ao spawn --profile`. Templates, defined under `templates`, name which profile fills each role slot (`worker`, `orchestrator`, `reviewers`) and an `orchestratorRulesFile` delegation plan; `ao project apply-template` binds one. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
 
 **Syntax:**
 ```
@@ -175,4 +175,24 @@ ao project set-config agent-orchestrator --agent-rules "Run focused tests before
 ```bash
 # Load worker rules from a repo-relative file
 ao project set-config agent-orchestrator --agent-rules-file docs/ao-worker-rules.md
+```
+
+---
+
+### ao project apply-template
+
+Bind the named template (a `templates` entry set with `set-config --config-json`) to the project: the worker and orchestrator slots take its profiles, the reviewer list is replaced by its reviewer profiles, and the template becomes the active one. Nothing else in the config moves. While a template is active its `orchestratorRulesFile` is appended last to the orchestrator's standing rules.
+
+**Syntax:**
+```
+ao project apply-template <id> <template>
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--json` | Output the updated project as JSON | false |
+
+```bash
+# Switch the project to the flash-first assignment
+ao project apply-template agent-orchestrator flash-first
 ```

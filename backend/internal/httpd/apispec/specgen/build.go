@@ -209,6 +209,7 @@ var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names
 	"DomainAgentConfig":               "AgentConfig",
 	"DomainRoleOverride":              "RoleOverride",
 	"DomainRoleProfile":               "RoleProfile",
+	"DomainWorkflowTemplate":          "WorkflowTemplate",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":                     "ListProjectsResponse",
 	"ControllersProjectResponse":                          "ProjectResponse",
@@ -1827,6 +1828,18 @@ func projectOperations() []operation {
 			summary:    "Replace a project's per-project config",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			reqBody:    projectsvc.SetConfigInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/config/template", id: "applyProjectTemplate", tag: "projects",
+			summary:    "Bind a workflow template's profiles to the project's role slots",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    projectsvc.ApplyTemplateInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

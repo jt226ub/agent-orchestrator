@@ -26,6 +26,16 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"role names an undefined profile", ProjectConfig{Worker: RoleOverride{Profile: "missing"}}, true},
 		{"profile unknown harness", ProjectConfig{Profiles: map[string]RoleProfile{"p": {Harness: "nope"}}}, true},
 		{"profile bad agent config", ProjectConfig{Profiles: map[string]RoleProfile{"p": {AgentConfig: AgentConfig{Permissions: "yolo"}}}}, true},
+		{"good template", ProjectConfig{Profiles: map[string]RoleProfile{"w": {Harness: HarnessAgy}, "r": {Harness: HarnessClaudeCode}}, Templates: map[string]WorkflowTemplate{"flash-first": {Worker: "w", Reviewers: []string{"r"}, OrchestratorRulesFile: "rules/plan.md"}}, Template: "flash-first"}, false},
+		{"template names an undefined worker profile", ProjectConfig{Templates: map[string]WorkflowTemplate{"t": {Worker: "missing"}}}, true},
+		{"template names an undefined reviewer profile", ProjectConfig{Templates: map[string]WorkflowTemplate{"t": {Reviewers: []string{"missing"}}}}, true},
+		{"template reviewer profile cannot review", ProjectConfig{Profiles: map[string]RoleProfile{"g": {Harness: HarnessGoose}}, Templates: map[string]WorkflowTemplate{"t": {Reviewers: []string{"g"}}}}, true},
+		{"template plan file escapes the repo", ProjectConfig{Templates: map[string]WorkflowTemplate{"t": {OrchestratorRulesFile: "../plan.md"}}}, true},
+		{"template name with slash", ProjectConfig{Templates: map[string]WorkflowTemplate{"a/b": {}}}, true},
+		{"active template undefined", ProjectConfig{Template: "missing"}, true},
+		{"reviewer names a defined profile", ProjectConfig{Profiles: map[string]RoleProfile{"r": {Harness: HarnessCodex}}, Reviewers: []ReviewerConfig{{Harness: ReviewerCodex, Profile: "r"}}}, false},
+		{"reviewer names an undefined profile", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex, Profile: "missing"}}}, true},
+		{"reviewer profile cannot review", ProjectConfig{Profiles: map[string]RoleProfile{"g": {Harness: HarnessGoose}}, Reviewers: []ReviewerConfig{{Harness: ReviewerCodex, Profile: "g"}}}, true},
 		{"profile rules file escapes", ProjectConfig{Profiles: map[string]RoleProfile{"p": {RulesFile: "../rules.md"}}}, true},
 		{"profile name with slash", ProjectConfig{Profiles: map[string]RoleProfile{"a/b": {Harness: HarnessCodex}}}, true},
 		{"profile name with whitespace", ProjectConfig{Profiles: map[string]RoleProfile{" p": {Harness: HarnessCodex}}}, true},
@@ -281,5 +291,102 @@ func TestProjectConfigWithProfile(t *testing.T) {
 	}
 	if _, err := cfg.WithProfile(KindWorker, "missing"); err == nil {
 		t.Fatal("unknown profile must be refused")
+	}
+}
+
+func TestProjectConfigApplyTemplate(t *testing.T) {
+	cfg := ProjectConfig{
+		Worker:       RoleOverride{Harness: HarnessCodex, Profile: "old"},
+		Orchestrator: RoleOverride{Profile: "old"},
+		Reviewers:    []ReviewerConfig{{Harness: ReviewerCursor}},
+		Profiles: map[string]RoleProfile{
+			"old":          {Harness: HarnessCodex},
+			"orchestrator": {Harness: HarnessClaudeCode, AgentConfig: AgentConfig{Model: "opus"}},
+			"flash-coder":  {Harness: HarnessAgy, AgentConfig: AgentConfig{Model: "gemini-3.8-flash-high"}},
+			"pro-expert":   {Harness: HarnessAgy, AgentConfig: AgentConfig{Model: "gemini-3.1-pro-high", Permissions: PermissionModeBypassPermissions}},
+			"no-agent":     {AgentConfig: AgentConfig{Model: "m"}},
+		},
+		Templates: map[string]WorkflowTemplate{
+			"flash-first": {Orchestrator: "orchestrator", Worker: "flash-coder", Reviewers: []string{"pro-expert"}, OrchestratorRulesFile: "rules/plan-flash-first.md"},
+			"bare":        {},
+		},
+	}
+	applied, err := cfg.ApplyTemplate("flash-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Slots take the template's profile names; the worker's inline harness stays.
+	if applied.Worker.Profile != "flash-coder" || applied.Worker.Harness != HarnessCodex || applied.Orchestrator.Profile != "orchestrator" {
+		t.Fatalf("slots = %#v / %#v", applied.Worker, applied.Orchestrator)
+	}
+	// Reviewers are replaced by the template's, with a snapshot of the profile.
+	want := []ReviewerConfig{{Harness: ReviewerAgy, AgentConfig: AgentConfig{Model: "gemini-3.1-pro-high", Permissions: PermissionModeBypassPermissions}, Profile: "pro-expert"}}
+	if !reflect.DeepEqual(applied.Reviewers, want) {
+		t.Fatalf("reviewers = %#v", applied.Reviewers)
+	}
+	if applied.Template != "flash-first" || applied.TemplateRulesFile() != "rules/plan-flash-first.md" {
+		t.Fatalf("active = %q plan = %q", applied.Template, applied.TemplateRulesFile())
+	}
+	if err := applied.Validate(); err != nil {
+		t.Fatalf("applied config must validate: %v", err)
+	}
+	// Profiles are never changed, and the receiver is untouched.
+	if !reflect.DeepEqual(applied.Profiles, cfg.Profiles) || cfg.Worker.Profile != "old" || cfg.Template != "" || len(cfg.Reviewers) != 1 {
+		t.Fatalf("ApplyTemplate mutated profiles or the receiver: %#v", cfg)
+	}
+	// An empty template unbinds every slot and clears the reviewers.
+	bare, err := cfg.ApplyTemplate("bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.Worker.Profile != "" || bare.Orchestrator.Profile != "" || bare.Reviewers != nil || bare.Template != "bare" || bare.TemplateRulesFile() != "" {
+		t.Fatalf("bare = %#v", bare)
+	}
+	// Unknown templates, and templates naming unknown or agent-less reviewer
+	// profiles (which Validate refuses when set), are errors rather than partial binds.
+	broken := cfg
+	broken.Templates = map[string]WorkflowTemplate{"bad-worker": {Worker: "missing"}, "bad-review": {Reviewers: []string{"no-agent"}}}
+	for _, name := range []string{"missing", "bad-worker", "bad-review", ""} {
+		if _, err := broken.ApplyTemplate(name); err == nil {
+			t.Fatalf("template %q must be refused", name)
+		}
+	}
+	if cfg.TemplateRulesFile() != "" {
+		t.Fatalf("no active template must give no plan file, got %q", cfg.TemplateRulesFile())
+	}
+}
+
+func TestProjectConfigResolveReviewers(t *testing.T) {
+	cfg := ProjectConfig{
+		Profiles: map[string]RoleProfile{
+			"pro-expert": {Harness: HarnessAgy, AgentConfig: AgentConfig{Model: "gemini-3.1-pro-high"}},
+			"headless":   {AgentConfig: AgentConfig{Permissions: PermissionModeBypassPermissions}},
+		},
+		Reviewers: []ReviewerConfig{
+			// A stale snapshot: the profile's model has moved on since the template was applied.
+			{Harness: ReviewerCodex, AgentConfig: AgentConfig{Model: "old", Mode: "low"}, Profile: "pro-expert"},
+			// A profile without a harness keeps the inline harness and adds its fields.
+			{Harness: ReviewerCursor, Profile: "headless"},
+			// No profile: returned as is.
+			{Harness: ReviewerClaudeCode, AgentConfig: AgentConfig{Model: "opus"}},
+			// Unknown profile (refused by Validate): returned as is rather than dropped.
+			{Harness: ReviewerKiro, Profile: "gone"},
+		},
+	}
+	got := cfg.ResolveReviewers()
+	want := []ReviewerConfig{
+		{Harness: ReviewerAgy, AgentConfig: AgentConfig{Model: "gemini-3.1-pro-high", Mode: "low"}, Profile: "pro-expert"},
+		{Harness: ReviewerCursor, AgentConfig: AgentConfig{Permissions: PermissionModeBypassPermissions}, Profile: "headless"},
+		{Harness: ReviewerClaudeCode, AgentConfig: AgentConfig{Model: "opus"}},
+		{Harness: ReviewerKiro, Profile: "gone"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolved = %#v", got)
+	}
+	if cfg.Reviewers[0].Harness != ReviewerCodex {
+		t.Fatal("ResolveReviewers mutated the receiver")
+	}
+	if (ProjectConfig{}).ResolveReviewers() != nil {
+		t.Fatal("no reviewers must resolve to nil")
 	}
 }

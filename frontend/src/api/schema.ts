@@ -946,6 +946,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/config/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bind a workflow template's profiles to the project's role slots */
+        post: operations["applyProjectTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/permissions": {
         parameters: {
             query?: never;
@@ -3340,6 +3357,7 @@ export interface components {
         DomainReviewerConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
+            profile?: string;
         };
         EditConversationMessageRequest: {
             clientMessageId?: string;
@@ -3749,6 +3767,9 @@ export interface components {
             repo: string;
             workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
         };
+        ProjectApplyTemplateInput: {
+            template: string;
+        };
         ProjectClonePreparationCleanupInput: {
             path: string;
             preparationId: string;
@@ -3773,6 +3794,10 @@ export interface components {
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];
+            template?: string;
+            templates?: {
+                [key: string]: components["schemas"]["WorkflowTemplate"];
+            };
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
         };
@@ -4486,6 +4511,12 @@ export interface components {
             processedTokens: null | number;
             /** @description Input not read from an existing provider cache. Includes cache writes. */
             uncachedInputTokens: null | number;
+        };
+        WorkflowTemplate: {
+            orchestrator?: string;
+            orchestratorRulesFile?: string;
+            reviewers?: string[];
+            worker?: string;
         };
         WorkspaceCommitSummary: {
             author: string;
@@ -7530,6 +7561,60 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SetProjectConfigInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    applyProjectTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectApplyTemplateInput"];
             };
         };
         responses: {
