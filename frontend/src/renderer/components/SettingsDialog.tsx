@@ -1,4 +1,4 @@
-import { Bot, GitBranch, Inbox, MonitorCog, TriangleAlert, X, type LucideIcon, UserCog } from "lucide-react";
+import { Bot, GitBranch, Inbox, LayoutTemplate, MonitorCog, TriangleAlert, X, type LucideIcon, UserCog } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FocusScope } from "@radix-ui/react-focus-scope";
 import { useEffect, useRef, useState } from "react";
@@ -54,6 +54,7 @@ export function SettingsDialog() {
 		{ id: "general", label: t("settings.project.identity"), icon: MonitorCog },
 		{ id: "agents", label: t("settings.project.agents"), icon: Bot },
 		{ id: "profiles", label: t("settings.project.profiles"), icon: UserCog },
+		{ id: "templates", label: t("settings.project.templates"), icon: LayoutTemplate },
 		{ id: "workflow", label: t("settings.project.workflow"), icon: GitBranch },
 		{ id: "intake", label: t("settings.project.intake"), icon: Inbox },
 	];

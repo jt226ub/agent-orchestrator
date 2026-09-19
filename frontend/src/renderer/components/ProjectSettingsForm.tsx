@@ -44,6 +44,7 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 type RoleProfile = components["schemas"]["RoleProfile"];
+type WorkflowTemplate = components["schemas"]["WorkflowTemplate"];
 
 // A profile as edited on the Profiles tab: one card per entry, env as KEY=VALUE lines.
 type ProfileDraft = {
@@ -54,6 +55,19 @@ type ProfileDraft = {
 	permissions: string;
 	rulesFile: string;
 	env: string;
+};
+
+// A template as edited on the Templates tab: which profile fills each role slot
+// (the desktop edits the first reviewer; further entries are kept as saved) and
+// the orchestrator's plan file.
+type TemplateDraft = {
+	key: string;
+	name: string;
+	orchestrator: string;
+	worker: string;
+	reviewer: string;
+	extraReviewers: string[];
+	orchestratorRulesFile: string;
 };
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
@@ -68,7 +82,7 @@ type SettingsSaveResult = {
 	spawnError: unknown;
 };
 
-export type ProjectSettingsSection = "general" | "agents" | "profiles" | "workflow" | "intake";
+export type ProjectSettingsSection = "general" | "agents" | "profiles" | "templates" | "workflow" | "intake";
 export type ProjectSettingsSaveState = {
 	phase: "idle" | "pending" | "saving" | "saved" | "failed";
 	error?: string;
@@ -158,6 +172,8 @@ function SettingsBody({
 		workerProfile: config.worker?.profile ?? "",
 		orchestratorProfile: config.orchestrator?.profile ?? "",
 		profiles: profileDraftsFromConfig(config.profiles),
+		templates: templateDraftsFromConfig(config.templates),
+		template: config.template ?? "",
 		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
 		workerEffort: config.worker?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
 		workerPermissions: config.worker?.agentConfig?.permissions ?? config.agentConfig?.permissions ?? "",
@@ -167,6 +183,7 @@ function SettingsBody({
 		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		reviewerProfile: config.reviewers?.[0]?.profile ?? "",
 		reviewerModel: config.reviewers?.[0]?.agentConfig?.model ?? config.agentConfig?.model ?? "",
 		reviewerMode: config.reviewers?.[0]?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		reviewerEffort: config.reviewers?.[0]?.agentConfig?.effort ?? config.agentConfig?.effort ?? "",
@@ -252,6 +269,8 @@ function SettingsBody({
 							permissions: undefined,
 						}),
 						profiles: profilesFromDrafts(form.profiles),
+						templates: templatesFromDrafts(form.templates),
+						template: form.template || undefined,
 					}
 				: {
 						...config,
@@ -283,11 +302,14 @@ function SettingsBody({
 							permissions: undefined,
 						}),
 						profiles: profilesFromDrafts(form.profiles),
+						templates: templatesFromDrafts(form.templates),
+						template: form.template || undefined,
 						reviewers: form.reviewerHarness
 							? [{
 									harness: form.reviewerHarness,
 									agentConfig: buildRoleAgentConfig(existingReviewerAgentConfig, form.reviewerModel, form.reviewerMode, form.reviewerHarness === "codex" ? form.reviewerEffort : "", form.reviewerPermissions),
-								}]
+									...(form.reviewerProfile ? { profile: form.reviewerProfile } : {}),
+								}, ...(config.reviewers ?? []).slice(1)]
 							: undefined,
 						trackerIntake: buildIntake(intakeForm, config.trackerIntake),
 						autoReview: form.autoReview,
@@ -436,6 +458,11 @@ function SettingsBody({
 				const profileError = validateProfileDrafts(form.profiles, t);
 				if (profileError) {
 					setValidationError(profileError);
+					return;
+				}
+				const templateError = validateTemplateDrafts(form.templates, form.profiles, t);
+				if (templateError) {
+					setValidationError(templateError);
 					return;
 				}
 				setValidationError(null);
@@ -600,7 +627,7 @@ function SettingsBody({
 									reviewerHarness: v,
 									...(v !== f.reviewerHarness ? {
 										reviewerModel: "", reviewerMode: "", reviewerEffort: "",
-										reviewerPermissions: "",
+										reviewerPermissions: "", reviewerProfile: "",
 									} : {}),
 									}))
 								}
@@ -703,6 +730,8 @@ function SettingsBody({
 									profiles: f.profiles.filter((p) => p.key !== draft.key),
 									workerProfile: f.workerProfile === draft.name.trim() ? "" : f.workerProfile,
 									orchestratorProfile: f.orchestratorProfile === draft.name.trim() ? "" : f.orchestratorProfile,
+									reviewerProfile: f.reviewerProfile === draft.name.trim() ? "" : f.reviewerProfile,
+									templates: f.templates.map((tpl) => unbindProfile(tpl, draft.name.trim())),
 								}))
 							}
 						/>
@@ -721,6 +750,84 @@ function SettingsBody({
 						>
 							<Plus className="size-3.5" aria-hidden="true" />
 							{t("settings.project.addProfile")}
+						</Button>
+					</div>
+				</ProjectSettingsSection>
+			)}
+
+			{section === "templates" && (
+				<ProjectSettingsSection title={t("settings.project.templates")} titleHidden grouped>
+					<p className="px-1 text-xs leading-row text-settings-muted">{t("settings.project.templatesDescription")}</p>
+					{form.templates.length === 0 ? (
+						<p className="px-1 text-xs leading-row text-settings-muted">{t("settings.project.templatesEmpty")}</p>
+					) : null}
+					{form.templates.map((draft) => (
+						<TemplateCard
+							key={draft.key}
+							draft={draft}
+							active={form.template !== "" && form.template === draft.name.trim()}
+							profiles={form.profiles}
+							withReviewer={!isScratchProject}
+							onChange={(patch) =>
+								setForm((f) => ({
+									...f,
+									templates: f.templates.map((tpl) => (tpl.key === draft.key ? { ...tpl, ...patch } : tpl)),
+									// Renaming the active template keeps it active.
+									template: patch.name !== undefined && f.template === draft.name.trim() ? patch.name.trim() : f.template,
+								}))
+							}
+							onApply={() =>
+								setForm((f) => {
+									const reviewer = isScratchProject ? "" : draft.reviewer.trim();
+									const reviewerAgent = f.profiles.find((p) => p.name.trim() === reviewer)?.agent ?? "";
+									return {
+										...f,
+										workerProfile: draft.worker.trim(),
+										orchestratorProfile: draft.orchestrator.trim(),
+										...(isScratchProject
+											? {}
+											: {
+													reviewerHarness: reviewerAgent,
+													reviewerProfile: reviewerAgent ? reviewer : "",
+													reviewerModel: "",
+													reviewerMode: "",
+													reviewerEffort: "",
+													reviewerPermissions: "",
+												}),
+										template: draft.name.trim(),
+									};
+								})
+							}
+							onDuplicate={() =>
+								setForm((f) => {
+									const at = f.templates.findIndex((tpl) => tpl.key === draft.key);
+									const copy = { ...draft, key: newProfileKey(), name: nextTemplateName(draft.name, f.templates) };
+									return { ...f, templates: [...f.templates.slice(0, at + 1), copy, ...f.templates.slice(at + 1)] };
+								})
+							}
+							onDelete={() =>
+								setForm((f) => ({
+									...f,
+									templates: f.templates.filter((tpl) => tpl.key !== draft.key),
+									template: f.template === draft.name.trim() ? "" : f.template,
+								}))
+							}
+						/>
+					))}
+					<div className="flex justify-end px-1">
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							onClick={() =>
+								setForm((f) => ({
+									...f,
+									templates: [...f.templates, { key: newProfileKey(), name: nextTemplateName("template", f.templates), orchestrator: "", worker: "", reviewer: "", extraReviewers: [], orchestratorRulesFile: "" }],
+								}))
+							}
+						>
+							<Plus className="size-3.5" aria-hidden="true" />
+							{t("settings.project.addTemplate")}
 						</Button>
 					</div>
 				</ProjectSettingsSection>
@@ -1079,6 +1186,158 @@ function ProfileCard({
 			</SettingsRow>
 		</div>
 	);
+}
+
+function TemplateCard({
+	draft,
+	active,
+	profiles,
+	withReviewer,
+	onChange,
+	onApply,
+	onDuplicate,
+	onDelete,
+}: {
+	draft: TemplateDraft;
+	active: boolean;
+	profiles: ProfileDraft[];
+	withReviewer: boolean;
+	onChange: (patch: Partial<TemplateDraft>) => void;
+	onApply: () => void;
+	onDuplicate: () => void;
+	onDelete: () => void;
+}) {
+	const { t } = useTranslation();
+	const name = draft.name.trim() || t("settings.project.templateUnnamed");
+	const names = profiles.map((p) => p.name.trim()).filter((n) => n !== "");
+	const slotOptions = (value: string) => [
+		{ value: "__none__", label: t("settings.project.profileNone") },
+		...names.map((n) => ({ value: n, label: n })),
+		...(value && !names.includes(value) ? [{ value, label: value }] : []),
+	];
+	const slot = (label: string, ariaLabel: string, value: string, patch: (v: string) => Partial<TemplateDraft>) => (
+		<SettingsRow label={label}>
+			<SettingsOptionMenu
+				aria-label={ariaLabel}
+				value={value || "__none__"}
+				options={slotOptions(value)}
+				onChange={(v) => onChange(patch(v === "__none__" ? "" : v))}
+			/>
+		</SettingsRow>
+	);
+	return (
+		<div className="flex flex-col gap-1 rounded-md border border-border/70 px-2 py-2" data-testid="template-card" data-active={active ? "true" : undefined}>
+			<div className="flex items-center justify-between gap-2 px-1">
+				<span className="flex items-center gap-2 text-sm font-medium text-foreground">
+					{name}
+					{active ? (
+						<span className="rounded-sm bg-primary/15 px-1.5 py-0.5 text-2xs font-medium text-primary">{t("settings.project.templateActive")}</span>
+					) : null}
+				</span>
+				<div className="flex items-center gap-1">
+					<Button type="button" size="sm" variant={active ? "ghost" : "outline"} disabled={active} aria-label={t("settings.project.applyTemplate", { name })} onClick={onApply}>
+						{t("settings.project.applyTemplateLabel")}
+					</Button>
+					<Button type="button" size="sm" variant="ghost" aria-label={t("settings.project.duplicateTemplate", { name })} onClick={onDuplicate}>
+						<Copy className="size-3.5" aria-hidden="true" />
+					</Button>
+					<Button type="button" size="sm" variant="ghost" aria-label={t("settings.project.deleteTemplate", { name })} onClick={onDelete}>
+						<Trash2 className="size-3.5" aria-hidden="true" />
+					</Button>
+				</div>
+			</div>
+			<SettingsRow label={t("settings.project.profileName")}>
+				<Input
+					aria-label={t("settings.project.templateNameFor", { name })}
+					className="max-w-64 text-right"
+					value={draft.name}
+					onChange={(event) => onChange({ name: event.target.value })}
+				/>
+			</SettingsRow>
+			{slot(t("settings.project.orchestratorProfile"), t("settings.project.templateOrchestratorFor", { name }), draft.orchestrator, (orchestrator) => ({ orchestrator }))}
+			{slot(t("settings.project.workerProfile"), t("settings.project.templateWorkerFor", { name }), draft.worker, (worker) => ({ worker }))}
+			{withReviewer ? slot(t("settings.project.templateReviewer"), t("settings.project.templateReviewerFor", { name }), draft.reviewer, (reviewer) => ({ reviewer })) : null}
+			<SettingsRow label={t("settings.project.templatePlan")} description={t("settings.project.templatePlanHint")}>
+				<Input
+					aria-label={t("settings.project.templatePlanFor", { name })}
+					className="max-w-64 text-right"
+					placeholder="rules/plan-flash-first.md"
+					value={draft.orchestratorRulesFile}
+					onChange={(event) => onChange({ orchestratorRulesFile: event.target.value })}
+				/>
+			</SettingsRow>
+		</div>
+	);
+}
+
+function templateDraftsFromConfig(templates: Record<string, WorkflowTemplate> | undefined): TemplateDraft[] {
+	return Object.entries(templates ?? {})
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, tpl]) => ({
+			key: newProfileKey(),
+			name,
+			orchestrator: tpl.orchestrator ?? "",
+			worker: tpl.worker ?? "",
+			reviewer: tpl.reviewers?.[0] ?? "",
+			extraReviewers: (tpl.reviewers ?? []).slice(1),
+			orchestratorRulesFile: tpl.orchestratorRulesFile ?? "",
+		}));
+}
+
+function templatesFromDrafts(drafts: TemplateDraft[]): Record<string, WorkflowTemplate> | undefined {
+	if (drafts.length === 0) return undefined;
+	const templates: Record<string, WorkflowTemplate> = {};
+	for (const draft of drafts) {
+		const name = draft.name.trim();
+		if (name === "") continue;
+		const tpl: WorkflowTemplate = {};
+		if (draft.orchestrator.trim()) tpl.orchestrator = draft.orchestrator.trim();
+		if (draft.worker.trim()) tpl.worker = draft.worker.trim();
+		const reviewers = [draft.reviewer.trim(), ...draft.extraReviewers].filter((r) => r !== "");
+		if (reviewers.length > 0) tpl.reviewers = reviewers;
+		if (draft.orchestratorRulesFile.trim()) tpl.orchestratorRulesFile = draft.orchestratorRulesFile.trim();
+		templates[name] = tpl;
+	}
+	return Object.keys(templates).length > 0 ? templates : undefined;
+}
+
+function unbindProfile(tpl: TemplateDraft, profile: string): TemplateDraft {
+	return {
+		...tpl,
+		orchestrator: tpl.orchestrator.trim() === profile ? "" : tpl.orchestrator,
+		worker: tpl.worker.trim() === profile ? "" : tpl.worker,
+		reviewer: tpl.reviewer.trim() === profile ? "" : tpl.reviewer,
+		extraReviewers: tpl.extraReviewers.filter((r) => r !== profile),
+	};
+}
+
+function nextTemplateName(base: string, existing: TemplateDraft[]): string {
+	const taken = new Set(existing.map((tpl) => tpl.name.trim()));
+	const stem = base.trim() || "template";
+	if (!taken.has(stem)) return stem;
+	for (let n = 2; n < 1000; n += 1) {
+		const candidate = `${stem}-${n}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	return `${stem}-${Date.now()}`;
+}
+
+function validateTemplateDrafts(drafts: TemplateDraft[], profiles: ProfileDraft[], t: TFunction): string | null {
+	const known = new Set(profiles.map((p) => p.name.trim()).filter((n) => n !== ""));
+	const seen = new Set<string>();
+	for (const draft of drafts) {
+		const name = draft.name.trim();
+		if (name === "") return t("settings.project.templateNameRequired");
+		if (/[\/\\]/.test(name) || name === "." || name === "..") return t("settings.project.templateNameInvalid", { name });
+		if (seen.has(name)) return t("settings.project.templateNameDuplicate", { name });
+		seen.add(name);
+		for (const profile of [draft.orchestrator, draft.worker, draft.reviewer, ...draft.extraReviewers]) {
+			if (profile.trim() !== "" && !known.has(profile.trim())) {
+				return t("settings.project.templateProfileUnknown", { name, profile: profile.trim() });
+			}
+		}
+	}
+	return null;
 }
 
 let profileKeyCounter = 0;

@@ -606,6 +606,114 @@ describe("ProjectSettingsForm", () => {
 		});
 	}, 20_000);
 
+	it("applies a template to the role slots and saves the templates", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				reviewers: [{ harness: "cursor", agentConfig: { model: "old" } }],
+				profiles: {
+					"flash-coder": { agent: "codex", agentConfig: { model: "flash-model" } },
+					"pro-expert": { agent: "codex", agentConfig: { model: "pro-model" } },
+					orchestrator: { agent: "claude-code" },
+				},
+				templates: {
+					"flash-first": { orchestrator: "orchestrator", worker: "flash-coder", reviewers: ["pro-expert"], orchestratorRulesFile: "rules/plan.md" },
+				},
+			},
+		});
+
+		renderSettings("proj-1", undefined, "templates");
+
+		expect(await screen.findByLabelText("Name of template flash-first")).toHaveValue("flash-first");
+		expect(screen.getByLabelText("Plan file for template flash-first")).toHaveValue("rules/plan.md");
+		expect(screen.getByRole("button", { name: "Worker profile for template flash-first" })).toHaveTextContent("flash-coder");
+		expect(screen.queryByText("Active")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Apply template flash-first" }));
+		expect(screen.getByText("Active")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Apply template flash-first" })).toBeDisabled();
+
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: expect.objectContaining({
+					worker: expect.objectContaining({ agent: "codex", profile: "flash-coder" }),
+					orchestrator: expect.objectContaining({ agent: "claude-code", profile: "orchestrator" }),
+					// The reviewer slot takes the profile's agent and remembers the binding;
+					// the previous reviewer's model does not survive the switch.
+					reviewers: [{ harness: "codex", agentConfig: undefined, profile: "pro-expert" }],
+					template: "flash-first",
+					templates: {
+						"flash-first": { orchestrator: "orchestrator", worker: "flash-coder", reviewers: ["pro-expert"], orchestratorRulesFile: "rules/plan.md" },
+					},
+				}),
+			},
+		});
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
+	}, 20_000);
+
+	it("unbinds a deleted profile from templates and refuses unknown template profiles", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				profiles: { "flash-coder": { agent: "codex" }, "pro-expert": { agent: "codex" } },
+				templates: { "flash-first": { worker: "flash-coder", reviewers: ["pro-expert"] } },
+				template: "flash-first",
+			},
+		});
+
+		renderSettings("proj-1", undefined, "profiles");
+		await userEvent.click(await screen.findByRole("button", { name: "Delete profile pro-expert" }));
+		submitSettings();
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: expect.objectContaining({
+					template: "flash-first",
+					templates: { "flash-first": { worker: "flash-coder" } },
+				}),
+			},
+		});
+	}, 20_000);
+
+	it("refuses a template that names a missing profile before saving", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" }, profiles: { one: { agent: "codex" } }, templates: { t: { worker: "gone" } } },
+		});
+
+		renderSettings("proj-1", undefined, "templates");
+		expect(await screen.findByLabelText("Name of template t")).toHaveValue("t");
+		submitSettings();
+		expect(await screen.findByText("Template t names a profile that does not exist: gone.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
 	it("refuses duplicate profile names before saving", async () => {
 		mockProject({
 			id: "proj-1",
