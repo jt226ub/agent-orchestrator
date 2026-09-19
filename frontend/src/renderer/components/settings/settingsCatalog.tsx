@@ -6,7 +6,7 @@ import { BrowserDownloadsSection } from "./BrowserDownloadsSection";
 import { BrowserProfilesSection } from "./BrowserProfilesSection";
 import { CloudCredentialsSection } from "./CloudCredentialsSection";
 import { CloudProviderSection } from "./CloudProviderSection";
-import { AgyCapacitySection } from "./AgyCapacitySection";
+import { AgyAccountsSection } from "./AgyAccountsSection";
 import { CodexAccountsSection } from "./CodexAccountsSection";
 import { ConnectMobileContent } from "./ConnectMobileContent";
 import { GeneralSettingsSection } from "./GeneralSettingsSection";
@@ -58,7 +58,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 			<>
 				<CodexAccountsSection titleHidden={titleHidden} />
 				<div className="border-t border-border/60 pt-5">
-					<AgyCapacitySection />
+					<AgyAccountsSection titleHidden={titleHidden} />
 				</div>
 			</>
 		),
