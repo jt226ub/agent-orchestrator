@@ -37,10 +37,9 @@ func parseAgyCredentialIdentity(data []byte) (agyCredentialIdentity, error) {
 	if document.Token == nil || (strings.TrimSpace(document.Token.AccessToken) == "" && strings.TrimSpace(document.Token.RefreshToken) == "") {
 		return agyCredentialIdentity{}, errors.New("agy credential does not contain a supported login")
 	}
+	// Every Antigravity sign-in is a Google account; auth_method only says
+	// which kind ("consumer" for a personal account, otherwise a Workspace one).
 	identity := agyCredentialIdentity{Method: domain.AgyAuthMethodGoogle}
-	if method := strings.TrimSpace(document.AuthMethod); method != "" && !strings.EqualFold(method, "oauth") && !strings.EqualFold(method, "google") {
-		identity.Method = domain.AgyAuthMethodOther
-	}
 	subject, email := agyIDTokenClaims(document.IDToken)
 	if subject != "" && !safeProviderAccountID(subject) {
 		return agyCredentialIdentity{}, errors.New("agy credential contains an invalid account identity")

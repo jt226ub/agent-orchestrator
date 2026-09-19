@@ -14,7 +14,7 @@ import (
 )
 
 // Service integration.
-func (s *Service) structuredAgyAuthentication(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, bool) {
+func (s *Service) structuredAgyAuthentication(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, bool) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if agentID != string(domain.HarnessAgy) || s.agyAccounts == nil || s.agyAccounts.factory == nil {
 		return domain.AgentAuthenticationObservation{}, false
 	}
@@ -41,11 +41,11 @@ func (s *Service) structuredAgyAuthentication(ctx context.Context, agentID strin
 		if !reconciled || credentialPresent {
 			return uncheckedAuthentication(), true
 		}
-		return successfulAuthentication(s.agyAccounts.now(), domain.AgentAuthenticationUnauthorized, domain.AgentReadinessReasonUnauthorized, "Sign in to Agy or add an account in Settings."), true
+		return successfulAuthentication(s.agyAccounts.now(), domain.AgentAuthenticationUnauthorized, domain.AgentReadinessReasonUnauthorized, "Sign in to Antigravity or add an account in Settings."), true
 	}
 	record, ok := s.agyAccounts.catalog.record(id)
 	if !ok {
-		return failedAuthentication(s.agyAccounts.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "The active Agy account is unavailable."), true
+		return failedAuthentication(s.agyAccounts.now(), domain.AgentReadinessReasonAuthCheckInconclusive, "The active Antigravity account is unavailable."), true
 	}
 	result, err := s.agyAccounts.ensureAuthentication(ctx, record, purpose)
 	if err != nil {
@@ -92,7 +92,7 @@ func (s *Service) CachedAgyAccounts(ctx context.Context) (AgyAccounts, error) {
 		return AgyAccounts{}, err
 	}
 	if s.agyAccounts == nil {
-		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if err := s.WaitAgyAccountStoreReady(ctx); err != nil {
 		return AgyAccounts{}, err
@@ -115,7 +115,7 @@ type AgyAccountEnsureOptions struct {
 // EnsureAgyAccounts rediscovers requested accounts and refreshes eligible observations.
 func (s *Service) EnsureAgyAccounts(ctx context.Context, ids []string, options AgyAccountEnsureOptions) (AgyAccounts, error) {
 	if s.agyAccounts == nil {
-		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if s.agySwitches != nil && s.agySwitches.AgyAccountSwitchInProgress() {
 		if sw, ok, err := s.agySwitches.GetActiveAgyAccountSwitch(ctx); err == nil && ok {
@@ -150,7 +150,7 @@ func (s *Service) EnsureAgyAccounts(ctx context.Context, ids []string, options A
 // SubscribeAgyAccounts returns cached state followed by latest-wins updates.
 func (s *Service) SubscribeAgyAccounts(ctx context.Context) (<-chan AgyAccounts, error) {
 	if s.agyAccounts == nil {
-		return nil, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return nil, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if err := s.WaitAgyAccountStoreReady(ctx); err != nil {
 		return nil, err
@@ -198,10 +198,10 @@ func (s *Service) SetAgyAccountLoginTerminalOpener(opener agyAccountLoginTermina
 
 func (s *Service) prepareAgyAccountLogin(ctx context.Context) error {
 	if s.agyAccounts == nil {
-		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if s.agySwitches != nil && s.agySwitches.AgyAccountSwitchInProgress() {
-		return apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "A Agy account switch is already in progress", nil)
+		return apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "An Antigravity account switch is already in progress", nil)
 	}
 	if err := s.WaitAgyAccountStoreReady(ctx); err != nil {
 		return err
@@ -212,9 +212,9 @@ func (s *Service) prepareAgyAccountLogin(ctx context.Context) error {
 	capabilities := s.agyAccounts.detectCapabilities(ctx)
 	switch capabilities.NativeLogin.State {
 	case domain.AgyCapabilityUnsupported:
-		return apierr.NotImplemented("AGY_ACCOUNT_MANAGEMENT_UNSUPPORTED", "This Agy version does not support account management")
+		return apierr.NotImplemented("AGY_ACCOUNT_MANAGEMENT_UNSUPPORTED", "This Antigravity version does not support account management")
 	case domain.AgyCapabilityUnknown:
-		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management capability could not be verified")
+		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management capability could not be verified")
 	default:
 		return nil
 	}
@@ -245,15 +245,15 @@ func (s *Service) OpenAgyAccountReauthenticationTerminal(ctx context.Context, ac
 // LogoutAgyAccount removes one AO-saved credential while retaining the
 // account card. Active-account logout also clears the device-global file-backed
 // credential after exact structured identity confirmation.
-func (s *Service) LogoutAgyAccount(ctx context.Context, accountID string) (AgyAccounts, error) {
+func (s *Service) LogoutAgyAccount(ctx context.Context, accountID string) (AgyAccounts, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if s.agyAccounts == nil || s.agyAccounts.factory == nil {
-		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if s.agySwitches != nil && s.agySwitches.AgyAccountSwitchInProgress() {
-		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "A Agy account switch is already in progress", nil)
+		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "An Antigravity account switch is already in progress", nil)
 	}
 	if s.AgyAccountLoginInProgress() {
-		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Agy account login before logging out", nil)
+		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Antigravity account login before logging out", nil)
 	}
 	if err := s.WaitAgyAccountStoreReady(ctx); err != nil {
 		return AgyAccounts{}, err
@@ -277,13 +277,13 @@ func (s *Service) LogoutAgyAccount(ctx context.Context, accountID string) (AgyAc
 // DeleteAgyAccount permanently removes one inactive signed-out account slot.
 func (s *Service) DeleteAgyAccount(ctx context.Context, accountID string) (AgyAccounts, error) {
 	if s.agyAccounts == nil {
-		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return AgyAccounts{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	if s.agySwitches != nil && s.agySwitches.AgyAccountSwitchInProgress() {
-		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "A Agy account switch is already in progress", nil)
+		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_SWITCH_IN_PROGRESS", "An Antigravity account switch is already in progress", nil)
 	}
 	if s.AgyAccountLoginInProgress() {
-		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Agy account login before deleting an account", nil)
+		return AgyAccounts{}, apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Antigravity account login before deleting an account", nil)
 	}
 	if err := s.WaitAgyAccountStoreReady(ctx); err != nil {
 		return AgyAccounts{}, err
@@ -304,7 +304,7 @@ func (s *Service) DeleteAgyAccount(ctx context.Context, accountID string) (AgyAc
 // has been safely validated and committed.
 func (s *Service) VerifyAgyAccountLogin(ctx context.Context, operationID string) (domain.AgyAccountLoginOperation, error) {
 	if s.agyAccounts == nil {
-		return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	result, err := s.agyAccounts.verifyLogin(ctx, strings.TrimSpace(operationID))
 	if err == nil && result.Status == domain.AgyAccountLoginCompleted && result.Account != nil {
@@ -326,7 +326,7 @@ func (s *Service) VerifyAgyAccountLogin(ctx context.Context, operationID string)
 // CancelAgyAccountLogin destroys a pending login and its credential staging.
 func (s *Service) CancelAgyAccountLogin(ctx context.Context, operationID string) (domain.AgyAccountLoginOperation, error) {
 	if s.agyAccounts == nil {
-		return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return domain.AgyAccountLoginOperation{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	return s.agyAccounts.cancelLogin(ctx, strings.TrimSpace(operationID))
 }
@@ -336,7 +336,7 @@ func (s *Service) requireAgyAccountInstallation(ctx context.Context) error {
 		return err
 	}
 	if observations[0].Installation.State == domain.AgentInstallationNotInstalled && observations[0].Installation.Freshness == domain.AgentReadinessFresh {
-		return apierr.NotImplemented("AGY_ACCOUNT_MANAGEMENT_UNSUPPORTED", "Agy is not installed")
+		return apierr.NotImplemented("AGY_ACCOUNT_MANAGEMENT_UNSUPPORTED", "Antigravity is not installed")
 	}
 	return nil
 }
@@ -389,7 +389,7 @@ func (s *Service) WarmAgyAccounts() {
 // never starts Agy or inspects the device-global credential.
 func (s *Service) WaitAgyAccountStoreReady(ctx context.Context) error {
 	if s.agyAccounts == nil {
-		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	err := s.agyAccounts.waitAccountStore(ctx)
 	if err == nil {
@@ -399,7 +399,7 @@ func (s *Service) WaitAgyAccountStoreReady(ctx context.Context) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	return apierr.New(apierr.KindUnavailable, "AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account setup did not complete", map[string]any{
+	return apierr.New(apierr.KindUnavailable, "AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account setup did not complete", map[string]any{
 		"reasonCode": failure.reason, "retryable": failure.retryable,
 	})
 }
@@ -425,7 +425,7 @@ func (s *Service) EnsureAgyDeviceAccountReconciled(ctx context.Context) error {
 	if strings.TrimSpace(reason) == "" {
 		reason = "account_reconciliation_unavailable"
 	}
-	return apierr.New(apierr.KindUnavailable, "AGY_DEVICE_ACCOUNT_UNVERIFIED", "The device Agy account could not be verified", map[string]any{
+	return apierr.New(apierr.KindUnavailable, "AGY_DEVICE_ACCOUNT_UNVERIFIED", "The device Antigravity account could not be verified", map[string]any{
 		"reasonCode": reason, "retryable": retryable,
 	})
 }
@@ -434,7 +434,7 @@ func (s *Service) EnsureAgyDeviceAccountReconciled(ctx context.Context) error {
 // of the credential mutation path for the complete transaction.
 func (s *Service) BeginAgyAccountMutation(ctx context.Context) error {
 	if s.agyAccounts == nil {
-		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	_, err := s.agyAccounts.acquireAccountMutation(ctx)
 	return err
@@ -469,17 +469,17 @@ func (s *Service) PrepareAgyAccountForSwitch(ctx context.Context, switchID, acco
 		return domain.AgyAccountSwitchSource{}, errors.Join(ports.ErrAgyAccountSwitchNotCommitted, err)
 	}
 	if s.agyAccounts == nil {
-		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable"))
+		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable"))
 	}
 	if s.AgyAccountLoginInProgress() {
-		return notPrepared(apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Agy account login before switching accounts", nil))
+		return notPrepared(apierr.Conflict("AGY_ACCOUNT_LOGIN_IN_PROGRESS", "Finish or close the Antigravity account login before switching accounts", nil))
 	}
 	if !isCanonicalUUIDv4(strings.TrimSpace(switchID)) {
-		return notPrepared(apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Agy account switch identifier", nil))
+		return notPrepared(apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Antigravity account switch identifier", nil))
 	}
 	record, ok := s.agyAccounts.catalog.record(strings.TrimSpace(accountID))
 	if !ok || record.Snapshot.Status != domain.AgyAccountStatusValid {
-		return notPrepared(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found"))
+		return notPrepared(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found"))
 	}
 	if err := ctx.Err(); err != nil {
 		return notPrepared(err)
@@ -488,30 +488,30 @@ func (s *Service) PrepareAgyAccountForSwitch(ctx context.Context, switchID, acco
 	credential, admitted, credentialErr := readCodexFileState(credentialPath, false)
 	if credentialErr != nil {
 		s.agyAccounts.requireReauthentication(record.Snapshot.ID)
-		return notPrepared(apierr.Conflict("AGY_ACCOUNT_REAUTHENTICATION_REQUIRED", "Sign in again before switching to this Agy account", nil))
+		return notPrepared(apierr.Conflict("AGY_ACCOUNT_REAUTHENTICATION_REQUIRED", "Sign in again before switching to this Antigravity account", nil))
 	}
 	latestCredential, latest, latestErr := readCodexFileState(credentialPath, false)
 	if latestErr != nil || !sameCodexFileState(admitted, latest) || !bytes.Equal(credential, latestCredential) {
-		return notPrepared(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The Agy account changed while preparing the switch. Try again", nil))
+		return notPrepared(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The Antigravity account changed while preparing the switch. Try again", nil))
 	}
 	if !agyLocalCredentialIdentifiesRecord(record, latestCredential) {
-		return notPrepared(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The saved Agy account no longer matches its credential. Sign in again", nil))
+		return notPrepared(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The saved Antigravity account no longer matches its credential. Sign in again", nil))
 	}
 	_ = s.agyAccounts.catalog.updateCredentialIdentity(ctx, record.Snapshot.ID, latestCredential)
 
 	stagingDir := filepath.Join(s.agyAccounts.switchStagingRoot, switchID)
 	if err := ensurePrivateDirectory(stagingDir); err != nil {
-		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The Agy credential switch could not be staged"))
+		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The Antigravity credential switch could not be staged"))
 	}
 	if err := writePrivateFileAtomic(filepath.Join(stagingDir, "target-auth.json"), latestCredential); err != nil {
 		_ = os.RemoveAll(stagingDir)
-		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The selected Agy credential could not be staged"))
+		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The selected Antigravity credential could not be staged"))
 	}
 
 	globalCredential, globalState, globalErr := readCodexFileState(s.agyAccounts.globalCredentialPath(), true)
 	if globalErr != nil {
 		_ = os.RemoveAll(stagingDir)
-		return notPrepared(apierr.NotImplemented("AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Agy account switching requires file-backed credentials"))
+		return notPrepared(apierr.NotImplemented("AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Antigravity account switching requires file-backed credentials"))
 	}
 	source := domain.AgyAccountSwitchSource{Kind: domain.AgyAccountSwitchSourceNone}
 	if globalState.exists {
@@ -524,7 +524,7 @@ func (s *Service) PrepareAgyAccountForSwitch(ctx context.Context, switchID, acco
 		}
 		if err := writePrivateFileAtomic(filepath.Join(stagingDir, "source-auth.json"), globalCredential); err != nil {
 			_ = os.RemoveAll(stagingDir)
-			return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The current Agy credential could not be checkpointed"))
+			return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The current Antigravity credential could not be checkpointed"))
 		}
 	}
 	finalGlobal, finalState, finalErr := readCodexFileState(s.agyAccounts.globalCredentialPath(), true)
@@ -543,15 +543,15 @@ func (s *Service) InspectAgyAccountSwitch(ctx context.Context, switchID string, 
 		return "", err
 	}
 	if s.agyAccounts == nil {
-		return "", apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable")
+		return "", apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable")
 	}
 	switchID = strings.TrimSpace(switchID)
 	if !isCanonicalUUIDv4(switchID) {
-		return "", apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Agy account switch identifier", nil)
+		return "", apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Antigravity account switch identifier", nil)
 	}
 	accountID = strings.TrimSpace(accountID)
 	if err := s.agyAccounts.validateGlobalCredentialStore(); err != nil {
-		return "", apierr.NotImplemented("AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Agy account switching requires file-backed credentials")
+		return "", apierr.NotImplemented("AGY_GLOBAL_CREDENTIAL_STORE_UNSUPPORTED", "Device-global Antigravity account switching requires file-backed credentials")
 	}
 	globalPath := s.agyAccounts.globalCredentialPath()
 	globalCredential, admitted, credentialErr := readCodexFileState(globalPath, true)
@@ -607,24 +607,24 @@ func (s *Service) ActivatePreparedAgyAccountSwitch(ctx context.Context, sourceKi
 		return errors.Join(ports.ErrAgyAccountSwitchNotCommitted, err)
 	}
 	if s.agyAccounts == nil {
-		return notCommitted(apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account management is unavailable"))
+		return notCommitted(apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account management is unavailable"))
 	}
 	if !isCanonicalUUIDv4(strings.TrimSpace(switchID)) {
-		return notCommitted(apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Agy account switch identifier", nil))
+		return notCommitted(apierr.Invalid("INVALID_AGY_ACCOUNT_ID", "Invalid Antigravity account switch identifier", nil))
 	}
 	stagingDir := filepath.Join(s.agyAccounts.switchStagingRoot, switchID)
 	if sourceKind != domain.AgyAccountSwitchSourceManaged && sourceKind != domain.AgyAccountSwitchSourceDevice && sourceKind != domain.AgyAccountSwitchSourceNone {
-		return notCommitted(apierr.Invalid("INVALID_AGY_ACCOUNT_SWITCH_SOURCE", "Invalid Agy account switch source", nil))
+		return notCommitted(apierr.Invalid("INVALID_AGY_ACCOUNT_SWITCH_SOURCE", "Invalid Antigravity account switch source", nil))
 	}
 	target, ok := s.agyAccounts.catalog.record(strings.TrimSpace(targetID))
 	if !ok || target.Snapshot.Status != domain.AgyAccountStatusValid {
-		return notCommitted(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found"))
+		return notCommitted(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found"))
 	}
 	targetCredential, targetState, targetErr := readCodexFileState(filepath.Join(stagingDir, "target-auth.json"), false)
 	latestTarget, latestTargetState, latestTargetErr := readCodexFileState(filepath.Join(stagingDir, "target-auth.json"), false)
 	if targetErr != nil || latestTargetErr != nil || !sameCodexFileState(targetState, latestTargetState) || !bytes.Equal(targetCredential, latestTarget) || !agyLocalCredentialIdentifiesRecord(target, latestTarget) {
 		s.agyAccounts.requireReauthentication(target.Snapshot.ID)
-		return notCommitted(apierr.Conflict("AGY_ACCOUNT_REAUTHENTICATION_REQUIRED", "Sign in again before switching to this Agy account", nil))
+		return notCommitted(apierr.Conflict("AGY_ACCOUNT_REAUTHENTICATION_REQUIRED", "Sign in again before switching to this Antigravity account", nil))
 	}
 	var expectedGlobal []byte
 	if sourceKind == domain.AgyAccountSwitchSourceNone {
@@ -633,7 +633,7 @@ func (s *Service) ActivatePreparedAgyAccountSwitch(ctx context.Context, sourceKi
 		var sourceErr error
 		expectedGlobal, sourceErr = readOpaqueCredential(filepath.Join(stagingDir, "source-auth.json"))
 		if sourceErr != nil {
-			return notCommitted(apierr.Conflict("AGY_GLOBAL_ACCOUNT_CHANGED", "The device Agy account changed before switching", nil))
+			return notCommitted(apierr.Conflict("AGY_GLOBAL_ACCOUNT_CHANGED", "The device Antigravity account changed before switching", nil))
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -695,7 +695,7 @@ func (s *Service) AgyAccountSwitchInProgress() bool {
 // StartAgyAccountSwitch starts a durable device credential switch.
 func (s *Service) StartAgyAccountSwitch(ctx context.Context, cfg ports.AgyAccountSwitchConfig) (domain.AgyAccountSwitch, error) {
 	if s.agySwitches == nil {
-		return domain.AgyAccountSwitch{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account switching is unavailable")
+		return domain.AgyAccountSwitch{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account switching is unavailable")
 	}
 	return s.agySwitches.StartAgyAccountSwitch(ctx, cfg)
 }
@@ -705,17 +705,17 @@ func (s *Service) StartAgyAccountSwitch(ctx context.Context, cfg ports.AgyAccoun
 func (s *Service) GetAgyAccountSwitch(ctx context.Context, id string) (domain.AgyAccountSwitch, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return domain.AgyAccountSwitch{}, apierr.Invalid("AGY_ACCOUNT_SWITCH_ID_REQUIRED", "Agy account switch ID is required", nil)
+		return domain.AgyAccountSwitch{}, apierr.Invalid("AGY_ACCOUNT_SWITCH_ID_REQUIRED", "Antigravity account switch ID is required", nil)
 	}
 	if s.agySwitches == nil {
-		return domain.AgyAccountSwitch{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Agy account switching is unavailable")
+		return domain.AgyAccountSwitch{}, apierr.Unavailable("AGY_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Antigravity account switching is unavailable")
 	}
 	sw, ok, err := s.agySwitches.GetAgyAccountSwitch(ctx, id)
 	if err != nil {
 		return domain.AgyAccountSwitch{}, err
 	}
 	if !ok {
-		return domain.AgyAccountSwitch{}, apierr.NotFound("AGY_ACCOUNT_SWITCH_NOT_FOUND", "Agy account switch not found")
+		return domain.AgyAccountSwitch{}, apierr.NotFound("AGY_ACCOUNT_SWITCH_NOT_FOUND", "Antigravity account switch not found")
 	}
 	return sw, nil
 }

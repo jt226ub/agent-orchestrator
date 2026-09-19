@@ -1,4 +1,4 @@
-package agent
+package agent //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 
 import (
 	"context"

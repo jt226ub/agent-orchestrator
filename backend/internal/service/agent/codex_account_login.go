@@ -127,7 +127,7 @@ func terminalLoginStatus(status domain.CodexAccountLoginStatus) bool {
 	return status == domain.CodexAccountLoginCompleted || status == domain.CodexAccountLoginCancelled || status == domain.CodexAccountLoginExpired || status == domain.CodexAccountLoginFailed
 }
 
-func (m *codexAccountManager) verifyLogin(ctx context.Context, operationID string) (domain.CodexAccountLoginOperation, error) {
+func (m *codexAccountManager) verifyLogin(ctx context.Context, operationID string) (domain.CodexAccountLoginOperation, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	op := m.login
 	if op == nil || op.snapshot.OperationID != operationID {
@@ -202,7 +202,7 @@ func (m *codexAccountManager) verifyLogin(ctx context.Context, operationID strin
 	}()
 	targetAccountID := op.targetAccountID
 	var record codexAccountRecord
-	if targetAccountID != "" {
+	if targetAccountID != "" { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 		target, targetFound := m.catalog.record(targetAccountID)
 		if !targetFound || !loginCredentialIdentifiesRecord(target, identity, pendingCredential) {
 			return m.finishLogin(operationID, domain.CodexAccountLoginFailed, domain.CodexAccountLoginReasonFailed, "Sign in with the same Codex account to replace its credentials.", nil), nil
@@ -321,7 +321,7 @@ func (m *codexAccountManager) matchCredentialAccount(credential []byte, identity
 func (m *codexAccountManager) finishLoginRetryable(id string) domain.CodexAccountLoginOperation {
 	return m.finishLogin(id, domain.CodexAccountLoginRetryable, domain.CodexAccountLoginReasonFailed, "The Codex credential is not ready yet. Try again.", nil)
 }
-func (m *codexAccountManager) finishLogin(id string, status domain.CodexAccountLoginStatus, code, reason string, account *domain.CodexAccountSnapshot) domain.CodexAccountLoginOperation {
+func (m *codexAccountManager) finishLogin(id string, status domain.CodexAccountLoginStatus, code, reason string, account *domain.CodexAccountSnapshot) domain.CodexAccountLoginOperation { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.login == nil || m.login.snapshot.OperationID != id {

@@ -136,7 +136,7 @@ func (m *codexAccountManager) reconcileGlobal(ctx context.Context) error {
 	return m.reconcileGlobalWithPolicy(ctx, false)
 }
 
-func (m *codexAccountManager) reconcileGlobalWithPolicy(ctx context.Context, force bool) error {
+func (m *codexAccountManager) reconcileGlobalWithPolicy(ctx context.Context, force bool) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -315,7 +315,7 @@ func (m *codexAccountManager) markDeviceReconciledLocked(active bool, at time.Ti
 	m.reconciliation.NextRetryAt = nil
 }
 
-func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error {
+func (m *codexAccountManager) reconcileGlobalInner(ctx context.Context) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	exclusive, err := m.acquireGlobalMutation(ctx)
 	if err != nil {
 		return err

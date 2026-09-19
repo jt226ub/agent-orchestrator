@@ -133,7 +133,7 @@ func (c *agyAccountCatalog) updateSnapshot(id string, update func(*domain.AgyAcc
 	c.records[id] = record
 }
 
-func (c *agyAccountCatalog) updateVerifiedDescriptor(ctx context.Context, id string, observation ports.AgyAccountObservation) error {
+func (c *agyAccountCatalog) updateVerifiedDescriptor(ctx context.Context, id string, observation ports.AgyAccountObservation) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	record, ok := c.record(id)
 	if !ok || (record.Snapshot.Status != domain.AgyAccountStatusValid && record.Snapshot.Status != domain.AgyAccountStatusSignedOut) {
 		return errors.New("agy account is unavailable")
@@ -191,17 +191,17 @@ func (c *agyAccountCatalog) refresh() error {
 		return errors.New("agy account storage is unavailable")
 	}
 	if err := ensurePrivateDirectory(c.root); err != nil {
-		return fmt.Errorf("prepare Agy account catalog: %w", err)
+		return fmt.Errorf("prepare Antigravity account catalog: %w", err)
 	}
 	entries, err := os.ReadDir(c.root)
 	if err != nil {
-		return fmt.Errorf("read Agy account catalog: %w", err)
+		return fmt.Errorf("read Antigravity account catalog: %w", err)
 	}
 	next := make(map[string]agyAccountRecord)
 	for _, entry := range entries {
 		id := entry.Name()
 		if !isCanonicalUUIDv4(id) {
-			c.logger.Debug("ignored non-account Agy catalog entry")
+			c.logger.Debug("ignored non-account Antigravity catalog entry")
 			continue
 		}
 		record := c.readManaged(id)
@@ -246,7 +246,7 @@ func (c *agyAccountCatalog) setOnRemoved(callback func([]string)) {
 	c.mu.Unlock()
 }
 
-func (c *agyAccountCatalog) readManaged(id string) agyAccountRecord {
+func (c *agyAccountCatalog) readManaged(id string) agyAccountRecord { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	accountDir := filepath.Join(c.root, id)
 	home := filepath.Join(accountDir, agyCredentialHomeDirectory)
 	broken := func(code, reason string) agyAccountRecord {
@@ -258,40 +258,40 @@ func (c *agyAccountCatalog) readManaged(id string) agyAccountRecord {
 		}}
 	}
 	if err := validateCodexDirectory(accountDir, true); err != nil {
-		return broken(domain.AgyAccountReasonUnsafePath, "This Agy account has an unsafe directory layout.")
+		return broken(domain.AgyAccountReasonUnsafePath, "This Antigravity account has an unsafe directory layout.")
 	}
 	descriptor, err := readAgyAccountDescriptor(filepath.Join(accountDir, agyAccountDescriptorFilename))
 	if err != nil || descriptor.ID != id || (descriptor.Version != 1 && descriptor.Version != agyAccountVersion) || descriptor.Source != domain.AgyAccountSourceManaged || !agyValidAccountAuthMethod(descriptor.AuthMethod) || (descriptor.AccountEmail != nil && !safeAccountEmail(*descriptor.AccountEmail)) || (descriptor.ProviderAccountID != "" && !safeProviderAccountID(descriptor.ProviderAccountID)) || descriptor.CreatedAt.IsZero() || descriptor.VerifiedAt.IsZero() {
-		return broken(domain.AgyAccountReasonDescriptorInvalid, "This Agy account descriptor is invalid.")
+		return broken(domain.AgyAccountReasonDescriptorInvalid, "This Antigravity account descriptor is invalid.")
 	}
 	_, err = os.Lstat(home)
 	if errors.Is(err, os.ErrNotExist) {
-		return broken(domain.AgyAccountReasonHomeMissing, "This Agy account credential home is missing.")
+		return broken(domain.AgyAccountReasonHomeMissing, "This Antigravity account credential home is missing.")
 	}
 	if err != nil || validateCodexDirectory(home, true) != nil || !pathWithin(c.root, home) {
-		return broken(domain.AgyAccountReasonUnsafePath, "This Agy account has an unsafe credential home.")
+		return broken(domain.AgyAccountReasonUnsafePath, "This Antigravity account has an unsafe credential home.")
 	}
 	credentialPath := filepath.Join(home, agyCredentialFilename)
 	credentialState, err := inspectCodexFile(credentialPath, true)
 	if errors.Is(err, os.ErrNotExist) {
-		return broken(domain.AgyAccountReasonUnsafePath, "This Agy account credential is unavailable or unsafe.")
+		return broken(domain.AgyAccountReasonUnsafePath, "This Antigravity account credential is unavailable or unsafe.")
 	}
 	if err == nil && !credentialState.exists {
 		return agyAccountRecord{Home: canonicalPath(home), ProviderAccountID: descriptor.ProviderAccountID, CreatedAt: descriptor.CreatedAt, VerifiedAt: descriptor.VerifiedAt, Snapshot: domain.AgyAccountSnapshot{
 			ID: id, Label: agyAccountLabel(descriptor.AccountEmail),
 			Source: domain.AgyAccountSourceManaged, Status: domain.AgyAccountStatusSignedOut,
-			ReasonCode: domain.AgyAccountReasonSignedOut, Reason: "This Agy account is signed out.",
-			Authentication: signedOutAuthentication(c.now(), "Sign in again to use this Agy account."), AuthMethod: descriptor.AuthMethod,
+			ReasonCode: domain.AgyAccountReasonSignedOut, Reason: "This Antigravity account is signed out.",
+			Authentication: signedOutAuthentication(c.now(), "Sign in again to use this Antigravity account."), AuthMethod: descriptor.AuthMethod,
 			AccountEmail: descriptor.AccountEmail, Capacity: unavailableAgyCapacity(), CreatedAt: descriptor.CreatedAt,
 		}}
 	}
 	if err != nil {
-		return broken(domain.AgyAccountReasonUnsafePath, "This Agy account credential is unavailable or unsafe.")
+		return broken(domain.AgyAccountReasonUnsafePath, "This Antigravity account credential is unavailable or unsafe.")
 	}
 	return agyAccountRecord{Home: canonicalPath(home), ProviderAccountID: descriptor.ProviderAccountID, CreatedAt: descriptor.CreatedAt, VerifiedAt: descriptor.VerifiedAt, Snapshot: domain.AgyAccountSnapshot{
 		ID: id, Label: agyAccountLabel(descriptor.AccountEmail),
 		Source: domain.AgyAccountSourceManaged, Status: domain.AgyAccountStatusValid,
-		ReasonCode: domain.AgyAccountReasonValid, Reason: "This Agy account is available.",
+		ReasonCode: domain.AgyAccountReasonValid, Reason: "This Antigravity account is available.",
 		Authentication: uncheckedAuthentication(), AuthMethod: descriptor.AuthMethod,
 		AccountEmail: descriptor.AccountEmail, Capacity: uncheckedAgyAccountCapacity(), CreatedAt: descriptor.CreatedAt,
 	}}
@@ -315,6 +315,9 @@ func (c *agyAccountCatalog) updateCredentialIdentity(ctx context.Context, id str
 		}
 		if identity.ProviderAccountID != "" {
 			descriptor.ProviderAccountID = identity.ProviderAccountID
+		}
+		if descriptor.AccountEmail == nil && identity.Email != nil {
+			descriptor.AccountEmail = identity.Email
 		}
 		return nil
 	})
@@ -368,7 +371,7 @@ func (c *agyAccountCatalog) replaceCredential(ctx context.Context, id string, cr
 	}
 	refreshed := c.readManaged(id)
 	if refreshed.Snapshot.Status != domain.AgyAccountStatusValid {
-		return agyAccountRecord{}, errors.New("updated Agy account failed validation")
+		return agyAccountRecord{}, errors.New("updated Antigravity account failed validation")
 	}
 	refreshed.Snapshot.Authentication = agyAccountAuthenticationObservation(c.now(), observation.Authentication)
 	c.mu.Lock()
@@ -388,7 +391,7 @@ func (c *agyAccountCatalog) markSignedOut(id string) (agyAccountRecord, error) {
 	}
 	refreshed := c.readManaged(id)
 	if refreshed.Snapshot.Status != domain.AgyAccountStatusSignedOut {
-		return agyAccountRecord{}, errors.New("signed-out Agy account failed validation")
+		return agyAccountRecord{}, errors.New("signed-out Antigravity account failed validation")
 	}
 	c.mu.Lock()
 	c.records[id] = refreshed
@@ -396,7 +399,7 @@ func (c *agyAccountCatalog) markSignedOut(id string) (agyAccountRecord, error) {
 	return refreshed, nil
 }
 
-func (c *agyAccountCatalog) deleteSignedOut(id string) error {
+func (c *agyAccountCatalog) deleteSignedOut(id string) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	record, ok := c.record(id)
 	if !ok || record.Snapshot.Status != domain.AgyAccountStatusSignedOut {
 		return errors.New("agy account is not signed out")
@@ -435,7 +438,7 @@ func (c *agyAccountCatalog) deleteSignedOut(id string) error {
 // catalog ID.
 func (c *agyAccountCatalog) discardCommitted(id string) error {
 	if !isCanonicalUUIDv4(id) {
-		return errors.New("invalid Agy account id")
+		return errors.New("invalid Antigravity account id")
 	}
 	accountDir := filepath.Join(c.root, id)
 	if !pathWithin(c.root, accountDir) || canonicalPath(filepath.Dir(accountDir)) != canonicalPath(c.root) {
@@ -470,13 +473,13 @@ func readAgyAccountDescriptor(path string) (agyAccountDescriptor, error) {
 	return descriptor, nil
 }
 
-func (c *agyAccountCatalog) commitPending(pendingDir string, observation ports.AgyAccountObservation) (agyAccountRecord, error) {
+func (c *agyAccountCatalog) commitPending(pendingDir string, observation ports.AgyAccountObservation) (agyAccountRecord, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if err := ensurePrivateDirectory(c.root); err != nil {
 		return agyAccountRecord{}, err
 	}
 	id := c.newID()
 	if !isCanonicalUUIDv4(id) {
-		return agyAccountRecord{}, errors.New("generated invalid Agy account id")
+		return agyAccountRecord{}, errors.New("generated invalid Antigravity account id")
 	}
 	createdAt := c.now()
 	providerAccountID := ""
@@ -486,6 +489,10 @@ func (c *agyAccountCatalog) commitPending(pendingDir string, observation ports.A
 			providerAccountID = identity.ProviderAccountID
 			if observation.Method == domain.AgyAuthMethodUnknown {
 				observation.Method = identity.Method
+			}
+			// The CLI reports no identity; the ID token's email is the label.
+			if observation.Email == nil {
+				observation.Email = identity.Email
 			}
 		}
 	}
@@ -500,18 +507,18 @@ func (c *agyAccountCatalog) commitPending(pendingDir string, observation ports.A
 	}
 	descriptorPath := filepath.Join(pendingDir, agyAccountDescriptorFilename)
 	if err := writePrivateFileAtomic(descriptorPath, append(data, '\n')); err != nil {
-		return agyAccountRecord{}, fmt.Errorf("write Agy account descriptor: %w", err)
+		return agyAccountRecord{}, fmt.Errorf("write Antigravity account descriptor: %w", err)
 	}
 	target := filepath.Join(c.root, id)
 	if err := os.Rename(pendingDir, target); err != nil {
-		return agyAccountRecord{}, fmt.Errorf("commit Agy account: %w", err)
+		return agyAccountRecord{}, fmt.Errorf("commit Antigravity account: %w", err)
 	}
 	if err := syncDirectory(c.root); err != nil {
 		return agyAccountRecord{}, err
 	}
 	record := c.readManaged(id)
 	if record.Snapshot.Status != domain.AgyAccountStatusValid {
-		return agyAccountRecord{}, errors.New("committed Agy account failed validation")
+		return agyAccountRecord{}, errors.New("committed Antigravity account failed validation")
 	}
 	c.mu.Lock()
 	c.records[id] = record
@@ -552,7 +559,7 @@ func agyCreatePendingCredentialHome(pendingRoot, operationID string) (string, st
 	return pendingDir, home, nil
 }
 
-func agyCleanupPendingCredentialHomes(pendingRoot string) error {
+func agyCleanupPendingCredentialHomes(pendingRoot string) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if err := ensurePrivateDirectory(pendingRoot); err != nil {
 		return err
 	}
@@ -578,7 +585,7 @@ func agyCleanupPendingCredentialHomes(pendingRoot string) error {
 			// an owned, non-symlinked directory rooted directly below this private
 			// parent; never follow an unsafe entry.
 			if validateCodexDirectory(path, true) != nil {
-				return errors.New("unsafe Agy staging directory owner")
+				return errors.New("unsafe Antigravity staging directory owner")
 			}
 			if removeErr := os.RemoveAll(path); removeErr != nil {
 				return removeErr
@@ -586,7 +593,7 @@ func agyCleanupPendingCredentialHomes(pendingRoot string) error {
 			continue
 		}
 		if validateCodexDirectory(path, true) != nil {
-			return errors.New("unsafe Agy staging directory owner")
+			return errors.New("unsafe Antigravity staging directory owner")
 		}
 		if removeErr := os.RemoveAll(path); removeErr != nil {
 			return removeErr
@@ -597,4 +604,4 @@ func agyCleanupPendingCredentialHomes(pendingRoot string) error {
 
 type unknownAgyAccountError struct{ id string }
 
-func (e unknownAgyAccountError) Error() string { return "unknown Agy account id" }
+func (e unknownAgyAccountError) Error() string { return "unknown Antigravity account id" }

@@ -33,7 +33,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 
 	record, ok := m.catalog.record(accountID)
 	if !ok || (record.Snapshot.Status != domain.AgyAccountStatusValid && record.Snapshot.Status != domain.AgyAccountStatusSignedOut) {
-		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found")
+		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found")
 	}
 	if record.Snapshot.Status == domain.AgyAccountStatusSignedOut {
 		return nil
@@ -44,7 +44,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 	if active {
 		globalCredential, admitted, globalErr := readCodexFileState(m.globalCredentialPath(), true)
 		if globalErr != nil {
-			return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Agy could not safely log out this account", nil)
+			return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Antigravity could not safely log out this account", nil)
 		}
 		if admitted.exists {
 			identity, identityErr := parseAgyCredentialIdentity(globalCredential)
@@ -52,7 +52,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 			latest, latestState, latestErr := readCodexFileState(m.globalCredentialPath(), false)
 			if match != agyCredentialMatchManaged || matched.Snapshot.ID != accountID || latestErr != nil ||
 				!sameCodexFileState(admitted, latestState) || !bytes.Equal(globalCredential, latest) {
-				return apierr.Conflict("AGY_GLOBAL_ACCOUNT_CHANGED", "The device Agy account changed", nil)
+				return apierr.Conflict("AGY_GLOBAL_ACCOUNT_CHANGED", "The device Antigravity account changed", nil)
 			}
 			logoutCredentialPath = m.globalCredentialPath()
 		}
@@ -60,7 +60,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 
 	_, credentialState, credentialErr := readCodexFileState(logoutCredentialPath, true)
 	if credentialErr != nil {
-		return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Agy could not safely log out this account", nil)
+		return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Antigravity could not safely log out this account", nil)
 	}
 	if credentialState.exists {
 		// The Antigravity CLI has no sign-out verb, and AO never deletes a
@@ -69,7 +69,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 	}
 
 	if _, err := m.catalog.markSignedOut(accountID); err != nil {
-		return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Agy logged out, but AO could not update the account. Try again.", nil)
+		return apierr.Conflict("AGY_ACCOUNT_LOGOUT_UNCONFIRMED", "Antigravity logged out, but AO could not update the account. Try again.", nil)
 	}
 	if active {
 		m.mu.Lock()
@@ -79,7 +79,7 @@ func (m *agyAccountManager) logout(ctx context.Context, accountID string) error 
 		m.mu.Unlock()
 	}
 	m.clearReauthenticationRequired(accountID)
-	m.capacity.replace(accountID, staticAgyCapacity(domain.AgyCapacityUnknown, domain.AgyCapacityReasonSkippedSignedOut, "Sign in to Agy to see subscription capacity."), "signed_out")
+	m.capacity.replace(accountID, staticAgyCapacity(domain.AgyCapacityUnknown, domain.AgyCapacityReasonSkippedSignedOut, "Sign in to Antigravity to see subscription capacity."), "signed_out")
 	m.publish()
 	return nil
 }
@@ -88,7 +88,7 @@ func (m *agyAccountManager) deleteAccount(ctx context.Context, accountID string)
 	accountID = strings.TrimSpace(accountID)
 	record, ok := m.catalog.record(accountID)
 	if !ok || (record.Snapshot.Status != domain.AgyAccountStatusValid && record.Snapshot.Status != domain.AgyAccountStatusSignedOut) {
-		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found")
+		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found")
 	}
 	if record.Snapshot.Status == domain.AgyAccountStatusValid {
 		if err := m.logout(ctx, accountID); err != nil {
@@ -102,16 +102,16 @@ func (m *agyAccountManager) deleteAccount(ctx context.Context, accountID string)
 	defer release()
 	record, ok = m.catalog.record(accountID)
 	if !ok || (record.Snapshot.Status != domain.AgyAccountStatusValid && record.Snapshot.Status != domain.AgyAccountStatusSignedOut) {
-		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found")
+		return apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found")
 	}
 	if record.Snapshot.Status != domain.AgyAccountStatusSignedOut {
-		return apierr.Conflict("AGY_ACCOUNT_DELETE_REQUIRES_LOGOUT", "Log out of this Agy account before deleting it", nil)
+		return apierr.Conflict("AGY_ACCOUNT_DELETE_REQUIRES_LOGOUT", "Log out of this Antigravity account before deleting it", nil)
 	}
 	if m.activeAccountID() == accountID {
-		return apierr.Conflict("AGY_ACCOUNT_DELETE_ACTIVE", "The active Agy account cannot be deleted", nil)
+		return apierr.Conflict("AGY_ACCOUNT_DELETE_ACTIVE", "The active Antigravity account cannot be deleted", nil)
 	}
 	if err := m.catalog.deleteSignedOut(accountID); err != nil {
-		return apierr.Conflict("AGY_ACCOUNT_DELETE_UNCONFIRMED", "Agy could not safely delete this account", nil)
+		return apierr.Conflict("AGY_ACCOUNT_DELETE_UNCONFIRMED", "Antigravity could not safely delete this account", nil)
 	}
 	m.mu.Lock()
 	delete(m.auth, accountID)
@@ -147,7 +147,7 @@ func (m *agyAccountManager) accountMayOwnDeviceCredential(accountID string) bool
 	return accountID != "" && accountID == lastKnownDeviceAccountID
 }
 
-func (m *agyAccountManager) activateFromCredentialLocked(ctx context.Context, accountID, sourceCredential string, expectedGlobal []byte) error {
+func (m *agyAccountManager) activateFromCredentialLocked(ctx context.Context, accountID, sourceCredential string, expectedGlobal []byte) error { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	notCommitted := func(err error) error {
 		return errors.Join(ports.ErrAgyAccountSwitchNotCommitted, err)
 	}
@@ -156,14 +156,14 @@ func (m *agyAccountManager) activateFromCredentialLocked(ctx context.Context, ac
 	}
 	record, ok := m.catalog.record(accountID)
 	if !ok || record.Snapshot.Status != domain.AgyAccountStatusValid {
-		return notCommitted(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Agy account not found"))
+		return notCommitted(apierr.NotFound("AGY_ACCOUNT_NOT_FOUND", "Antigravity account not found"))
 	}
 	targetCredential, err := readOpaqueCredential(sourceCredential)
 	if err != nil {
 		return notCommitted(err)
 	}
 	if !agyLocalCredentialIdentifiesRecord(record, targetCredential) {
-		return notCommitted(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The selected Agy credential does not match this account", nil))
+		return notCommitted(apierr.Conflict("AGY_ACCOUNT_IDENTITY_CHANGED", "The selected Antigravity credential does not match this account", nil))
 	}
 	if err := ctx.Err(); err != nil {
 		return notCommitted(err)
@@ -220,11 +220,17 @@ func agyWriteGlobalCredentialSettled(path string, data []byte) error {
 
 func agyWriteGlobalCredentialAtomic(path string, data []byte) error {
 	if len(data) == 0 || len(data) > 8<<20 {
-		return errors.New("global Agy credential is empty or too large")
+		return errors.New("global Antigravity credential is empty or too large")
 	}
 	parent := filepath.Dir(path)
 	info, err := os.Lstat(parent)
 	if errors.Is(err, os.ErrNotExist) {
+		// The token lives two levels under the home (.gemini/antigravity-cli);
+		// a home that has never run the CLI has neither, so create the chain
+		// private before the usual validation.
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			return err
+		}
 		if err := ensurePrivateDirectory(parent); err != nil {
 			return err
 		}

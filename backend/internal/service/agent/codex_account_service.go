@@ -14,7 +14,7 @@ import (
 )
 
 // Service integration.
-func (s *Service) structuredCodexAuthentication(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, bool) {
+func (s *Service) structuredCodexAuthentication(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, bool) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if agentID != string(domain.HarnessCodex) || s.codexAccounts == nil || s.codexAccounts.factory == nil {
 		return domain.AgentAuthenticationObservation{}, false
 	}
@@ -265,7 +265,7 @@ func (s *Service) OpenCodexAccountReauthenticationTerminal(ctx context.Context, 
 // LogoutCodexAccount removes one AO-saved credential while retaining the
 // account card. Active-account logout also clears the device-global file-backed
 // credential after exact structured identity confirmation.
-func (s *Service) LogoutCodexAccount(ctx context.Context, accountID string) (CodexAccounts, error) {
+func (s *Service) LogoutCodexAccount(ctx context.Context, accountID string) (CodexAccounts, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	if s.codexAccounts == nil || s.codexAccounts.factory == nil {
 		return CodexAccounts{}, apierr.Unavailable("CODEX_ACCOUNT_MANAGEMENT_UNAVAILABLE", "Codex account management is unavailable")
 	}

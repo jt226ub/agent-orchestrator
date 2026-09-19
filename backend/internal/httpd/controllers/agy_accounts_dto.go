@@ -5,7 +5,7 @@ import (
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
-func newAgyAccountsResponse(input agentsvc.AgyAccounts) AgyAccountsResponse {
+func newAgyAccountsResponse(input agentsvc.AgyAccounts) AgyAccountsResponse { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	accounts := make([]AgyAccountResponse, len(input.Accounts))
 	for i := range input.Accounts {
 		accounts[i] = newAgyAccountResponse(input.Accounts[i])

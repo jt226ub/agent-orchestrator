@@ -418,7 +418,7 @@ func (m *codexAccountManager) forceAuthenticationRetry(records []codexAccountRec
 	}
 }
 
-func (m *codexAccountManager) ensureAuthentication(ctx context.Context, record codexAccountRecord, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, error) {
+func (m *codexAccountManager) ensureAuthentication(ctx context.Context, record codexAccountRecord, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, error) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	for {
 		if err := ctx.Err(); err != nil {
 			return domain.AgentAuthenticationObservation{}, err
@@ -592,7 +592,7 @@ func accountAuthenticationObservation(at time.Time, state domain.AgentAuthentica
 	}
 }
 
-func (m *codexAccountManager) finishAuthentication(ctx context.Context, id string, observation domain.AgentAuthenticationObservation, method domain.CodexAuthMethod, email *string, failed bool, call *accountAuthCall) {
+func (m *codexAccountManager) finishAuthentication(ctx context.Context, id string, observation domain.AgentAuthenticationObservation, method domain.CodexAuthMethod, email *string, failed bool, call *accountAuthCall) { //nolint:dupl // Codex and Antigravity keep separate account contracts by design (FORK.md).
 	m.mu.Lock()
 	state := m.auth[id]
 	if !state.reauthenticationRequired {
