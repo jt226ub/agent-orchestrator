@@ -124,6 +124,193 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/agy/account-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a global AO Agy account switch */
+        post: operations["startAgyAccountSwitch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/account-switches/{switchId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one durable Agy account switch */
+        get: operations["getAgyAccountSwitch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return cached AO Agy accounts and active-account state */
+        get: operations["getAgyAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one inactive signed-out Agy account */
+        delete: operations["deleteAgyAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/{accountId}/login-terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open native Agy sign-in for one retained account */
+        post: operations["openAgyAccountReauthenticationTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/{accountId}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Log out one retained Agy account */
+        post: operations["logoutAgyAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover Antigravity accounts and ensure authentication and capacity */
+        post: operations["ensureAgyAccounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream cached and live Agy account state */
+        get: operations["streamAgyAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/login-operations/{operationId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel one native Agy account login operation */
+        post: operations["cancelAgyAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/login-operations/{operationId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify one native Agy account login operation */
+        post: operations["verifyAgyAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/agy/accounts/login-terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open an inline native login terminal for a new AO Agy account */
+        post: operations["openAgyAccountLoginTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/agy/capacity": {
         parameters: {
             query?: never;
@@ -2687,6 +2874,100 @@ export interface components {
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
         };
+        AgyAccountCapabilitiesResponse: {
+            globalSwitch: components["schemas"]["AgyCapabilityObservationResponse"];
+            nativeLogin: components["schemas"]["AgyCapabilityObservationResponse"];
+        };
+        AgyAccountLoginResponse: {
+            account?: components["schemas"]["AgyAccountResponse"];
+            accountId?: string;
+            /** Format: date-time */
+            expiresAt: string;
+            operationId: string;
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            status: "pending" | "verifying" | "unauthorized" | "retryable" | "completed" | "cancelled" | "failed" | "expired";
+        };
+        AgyAccountLoginTerminalResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            handleId: string;
+            title: string;
+        };
+        AgyAccountResponse: {
+            accountEmail?: null | string;
+            active: boolean;
+            /** @enum {string} */
+            authMethod: "google" | "other" | "unknown";
+            authentication: components["schemas"]["AgyAuthenticationResponse"];
+            capacity: components["schemas"]["AgyCapacityResponse"];
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            label: string;
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            status: "valid" | "signed_out" | "broken";
+        };
+        AgyAccountSwitchResponse: {
+            /** Format: date-time */
+            completedAt?: null | string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            credentialsCommittedAt?: null | string;
+            failureCode?: string;
+            id: string;
+            /** @enum {string} */
+            phase: "requested" | "checkpointing_source" | "activating_target" | "recovery_required" | "completed" | "failed";
+            sourceAccountId?: string;
+            /** @enum {string} */
+            sourceKind: "managed" | "device" | "none";
+            targetAccountId: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AgyAccountsResponse: {
+            /** Format: int64 */
+            accountRevision: number;
+            accounts: components["schemas"]["AgyAccountResponse"][];
+            activeAccountId?: string;
+            activeLogin?: components["schemas"]["AgyActiveLoginResponse"];
+            capabilities: components["schemas"]["AgyAccountCapabilitiesResponse"];
+            currentSwitch?: components["schemas"]["AgyAccountSwitchResponse"];
+            deviceReconciliation: components["schemas"]["AgyDeviceReconciliationResponse"];
+        };
+        AgyActiveLoginResponse: {
+            accountId?: string;
+            /** Format: date-time */
+            expiresAt: string;
+            operationId: string;
+            reason: string;
+            reasonCode: string;
+            shellTerminal: components["schemas"]["AgyAccountLoginTerminalResponse"];
+            /** @enum {string} */
+            status: "pending" | "verifying" | "unauthorized" | "retryable" | "completed" | "cancelled" | "failed" | "expired";
+        };
+        AgyAuthenticationResponse: {
+            /** Format: date-time */
+            attemptedAt: null | string;
+            /** Format: date-time */
+            checkedAt: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+        };
+        AgyCapabilityObservationResponse: {
+            reason: string;
+            reasonCode: string;
+            /** @enum {string} */
+            state: "supported" | "unsupported" | "unknown";
+        };
         AgyCapacityBucketResponse: {
             displayName?: null | string;
             primary?: components["schemas"]["AgyCapacityWindowResponse"];
@@ -2718,6 +2999,19 @@ export interface components {
             /** Format: double */
             usedPercent: number;
             windowDurationMinutes?: null | number;
+        };
+        AgyDeviceReconciliationResponse: {
+            activeAccountVerified: boolean;
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            nextRetryAt?: null | string;
+            reasonCode: string;
+            retryable: boolean;
+            /** @enum {string} */
+            status: "not_checked" | "checking" | "verified" | "temporarily_unavailable" | "blocked";
+            /** Format: date-time */
+            verifiedAt?: null | string;
         };
         AttachmentInput: {
             data: string;
@@ -3396,6 +3690,11 @@ export interface components {
             /** @enum {string} */
             purpose: "display" | "launch";
         };
+        EnsureAgyAccountsRequest: {
+            accountIds?: string[];
+            forceAuthentication?: boolean;
+            forceDeviceReconciliation?: boolean;
+        };
         EnsureAgyCapacityRequest: {
             force?: boolean;
         };
@@ -3717,6 +4016,10 @@ export interface components {
             kind: "session" | "pr";
             prUrl?: string;
             sessionId: string;
+        };
+        OpenAgyAccountLoginTerminalResponse: {
+            operation: components["schemas"]["AgyAccountLoginResponse"];
+            shellTerminal: components["schemas"]["AgyAccountLoginTerminalResponse"];
         };
         OpenCodexAccountLoginTerminalResponse: {
             operation: components["schemas"]["CodexAccountLoginResponse"];
@@ -4346,6 +4649,12 @@ export interface components {
              * @enum {string}
              */
             operation?: "install" | "reinstall";
+        };
+        StartAgyAccountSwitchRequest: {
+            /** @deprecated */
+            expectedAccountRevision?: null | number;
+            idempotencyKey: string;
+            targetAccountId: string;
         };
         StartCodexAccountSwitchRequest: {
             /** @deprecated */
@@ -5096,6 +5405,540 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startAgyAccountSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAgyAccountSwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountSwitchResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgyAccountSwitch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Durable Agy account switch identifier. */
+                switchId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountSwitchResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgyAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    deleteAgyAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description AO Agy account identifier. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openAgyAccountReauthenticationTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description AO Agy account identifier. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAgyAccountLoginTerminalResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    logoutAgyAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description AO Agy account identifier. */
+                accountId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    ensureAgyAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsureAgyAccountsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamAgyAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["AgyAccountsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelAgyAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description In-memory Agy account login operation identifier. */
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountLoginResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    verifyAgyAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description In-memory Agy account login operation identifier. */
+                operationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyAccountLoginResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openAgyAccountLoginTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAgyAccountLoginTerminalResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

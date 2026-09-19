@@ -62,6 +62,8 @@ type Service struct {
 	codexAccounts *codexAccountManager
 	codexSwitches *codexAccountSwitchCoordinator
 	agyCapacity   *agyCapacityCoordinator
+	agyAccounts   *agyAccountManager
+	agySwitches   *agyAccountSwitchCoordinator
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
@@ -79,6 +81,16 @@ type Deps struct {
 	CodexAccounts          ports.CodexAccountClientFactory
 	CodexAccountSwitches   ports.CodexAccountSwitchStore
 	CodexOperationGate     ports.CodexOperationGate
+	// Antigravity account management mirrors the Codex deps: a vault under the
+	// state dir, the user's real home as the device-global home, and the CLI
+	// account client factory. All optional; unset leaves the surface off.
+	AgyAccountRoot       string
+	AgyPendingRoot       string
+	AgySwitchStagingRoot string
+	AgyGlobalHome        string
+	AgyAccounts          ports.AgyAccountClientFactory
+	AgyAccountSwitches   ports.AgyAccountSwitchStore
+	AgyOperationGate     ports.AgyOperationGate
 	// Clock overrides time.Now for deterministic account-bootstrap retry tests.
 	Clock func() time.Time
 }
@@ -117,14 +129,31 @@ func NewWithDeps(deps Deps) *Service {
 			svc.agyCapacity.now = deps.Clock
 		}
 	}
+	if deps.AgyAccountRoot != "" && deps.AgyGlobalHome != "" {
+		svc.agyAccounts = newAgyAccountManager(deps.Context, deps.AgyAccountRoot, deps.AgyPendingRoot, deps.AgySwitchStagingRoot, deps.AgyGlobalHome, deps.AgyAccounts, deps.Logger, deps.AgyOperationGate)
+		if deps.Clock != nil {
+			svc.agyAccounts.now = deps.Clock
+		}
+	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,
-		AuthenticationCheck: svc.structuredCodexAuthentication,
+		AuthenticationCheck: svc.structuredAuthentication,
 	})
 	if svc.codexAccounts != nil {
 		svc.codexAccounts.onAuthenticationChanged = func() {
 			svc.readiness.Invalidate(string(domain.HarnessCodex), readinessInvalidateAuthentication)
 		}
+	}
+	if svc.agyAccounts != nil {
+		svc.agyAccounts.onAuthenticationChanged = func() {
+			svc.readiness.Invalidate(string(domain.HarnessAgy), readinessInvalidateAuthentication)
+		}
+	}
+	if svc.agyAccounts != nil && deps.AgyAccountSwitches != nil && deps.AgyOperationGate != nil {
+		svc.agySwitches = newAgyAccountSwitchCoordinator(
+			deps.Context, svc, deps.AgyAccountSwitches, deps.AgyOperationGate,
+			deps.Clock, svc.PublishAgyAccounts,
+		)
 	}
 	if svc.codexAccounts != nil && deps.CodexAccountSwitches != nil && deps.CodexOperationGate != nil {
 		svc.codexSwitches = newCodexAccountSwitchCoordinator(
@@ -490,4 +519,13 @@ func (s *Service) ResolveAgentBinary(ctx context.Context, agentID string) (strin
 	lock.Lock()
 	defer lock.Unlock()
 	return resolver.ResolveBinary(ctx)
+}
+
+// structuredAuthentication routes a readiness authentication check to the
+// account manager that owns the harness, if any.
+func (s *Service) structuredAuthentication(ctx context.Context, agentID string, purpose domain.AgentReadinessPurpose) (domain.AgentAuthenticationObservation, bool) {
+	if observation, ok := s.structuredCodexAuthentication(ctx, agentID, purpose); ok {
+		return observation, true
+	}
+	return s.structuredAgyAuthentication(ctx, agentID, purpose)
 }

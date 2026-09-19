@@ -38,24 +38,21 @@ func (p *Plugin) ReadAgyCapacity(ctx context.Context) (ports.AgyCapacityObservat
 	if err != nil {
 		return ports.AgyCapacityObservation{}, err
 	}
-	cmd := aoprocess.CommandContext(ctx, binary, "-p", "/usage", "--output-format", "json") //nolint:gosec // binary is adapter-resolved, args are static
+	return runAgyUsage(ctx, binary, environmentWithout(os.Environ(), capacityEnvKeysUnset))
+}
+
+// runAgyPrint runs one headless CLI command with the given environment and
+// returns bounded stdout and stderr. The CLI's error text is classified by
+// callers and never retained beyond that.
+func runAgyPrint(ctx context.Context, binary string, env []string, prompt string) (string, string, error) {
+	cmd := aoprocess.CommandContext(ctx, binary, "-p", prompt, "--output-format", "json") //nolint:gosec // binary is adapter-resolved, args are static
 	cmd.WaitDelay = capacityTerminationWait
-	cmd.Env = environmentWithout(os.Environ(), capacityEnvKeysUnset)
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{buf: &stdout, limit: capacityOutputLimit}
 	cmd.Stderr = &limitedWriter{buf: &stderr, limit: capacityOutputLimit}
-	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ports.AgyCapacityObservation{}, ctxErr
-		}
-		// The CLI answers a signed-out account on stderr and exits non-zero;
-		// the message is classified but never retained.
-		if capacitySignedOut(stderr.String()) {
-			return ports.AgyCapacityObservation{}, ports.ErrAgyCapacitySignedOut
-		}
-		return ports.AgyCapacityObservation{}, fmt.Errorf("agy capacity: %w", ports.ErrAgyCapacityRequestRejected)
-	}
-	return parseAgyUsage(stdout.Bytes(), time.Now().UTC())
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 type agyUsageEnvelope struct {
@@ -85,6 +82,7 @@ type agyUsageBucket struct {
 // model group, its 5-hour window primary and its weekly window secondary. The
 // Gemini group is the overall bucket because the CLI's default models draw on
 // it; every other group is additional.
+
 func parseAgyUsage(raw []byte, observedAt time.Time) (ports.AgyCapacityObservation, error) {
 	var envelope agyUsageEnvelope
 	if err := json.Unmarshal(raw, &envelope); err != nil {
@@ -184,6 +182,9 @@ func limitID(bucketID string) string {
 }
 
 func capacitySignedOut(text string) bool {
+	if authenticationRequired(text) {
+		return true
+	}
 	lower := strings.ToLower(text)
 	for _, marker := range []string{"authentication required", "not signed in", "not logged in", "please visit the url", "sign in", "log in"} {
 		if strings.Contains(lower, marker) {

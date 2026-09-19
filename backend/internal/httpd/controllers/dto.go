@@ -2623,3 +2623,149 @@ type MuteDeviceRequest struct {
 type InstallIDParam struct {
 	InstallID string `path:"installId" description:"The device's stable install id."`
 }
+
+// AgyAccountIDParam documents a Agy account route identifier.
+type AgyAccountIDParam struct {
+	AccountID string `path:"accountId" description:"AO Agy account identifier."`
+}
+
+// AgyAccountLoginIDParam documents a Agy login operation route identifier.
+type AgyAccountLoginIDParam struct {
+	OperationID string `path:"operationId" description:"In-memory Agy account login operation identifier."`
+}
+
+// AgyAccountSwitchIDParam documents a durable Agy account switch identifier.
+type AgyAccountSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable Agy account switch identifier."`
+}
+
+// AgyAccountsResponse is the controller-owned, redacted cached account view.
+type AgyAccountsResponse struct {
+	ActiveAccountID      string                          `json:"activeAccountId,omitempty"`
+	AccountRevision      int64                           `json:"accountRevision"`
+	Accounts             []AgyAccountResponse            `json:"accounts"`
+	Capabilities         AgyAccountCapabilitiesResponse  `json:"capabilities"`
+	DeviceReconciliation AgyDeviceReconciliationResponse `json:"deviceReconciliation"`
+	ActiveLogin          *AgyActiveLoginResponse         `json:"activeLogin,omitempty"`
+	CurrentSwitch        *AgyAccountSwitchResponse       `json:"currentSwitch,omitempty"`
+}
+
+// AgyDeviceReconciliationResponse reports whether the device credential was
+// locally associated with a saved account.
+type AgyDeviceReconciliationResponse struct {
+	Status                string     `json:"status" enum:"not_checked,checking,verified,temporarily_unavailable,blocked"`
+	ActiveAccountVerified bool       `json:"activeAccountVerified"`
+	ReasonCode            string     `json:"reasonCode"`
+	Retryable             bool       `json:"retryable"`
+	AttemptedAt           *time.Time `json:"attemptedAt,omitempty"`
+	VerifiedAt            *time.Time `json:"verifiedAt,omitempty"`
+	NextRetryAt           *time.Time `json:"nextRetryAt,omitempty"`
+}
+
+// AgyAccountResponse contains UI account facts without provider or storage identity.
+type AgyAccountResponse struct {
+	ID             string                    `json:"id"`
+	Label          string                    `json:"label"`
+	Status         string                    `json:"status" enum:"valid,signed_out,broken"`
+	ReasonCode     string                    `json:"reasonCode"`
+	Reason         string                    `json:"reason"`
+	Active         bool                      `json:"active"`
+	Authentication AgyAuthenticationResponse `json:"authentication"`
+	AuthMethod     string                    `json:"authMethod" enum:"google,other,unknown"`
+	AccountEmail   *string                   `json:"accountEmail,omitempty"`
+	Capacity       AgyCapacityResponse       `json:"capacity"`
+	CreatedAt      time.Time                 `json:"createdAt"`
+}
+
+// AgyAuthenticationResponse is the normalized authentication observation.
+type AgyAuthenticationResponse struct {
+	State       string     `json:"state" enum:"authorized,unauthorized,unknown,not_applicable"`
+	Freshness   string     `json:"freshness" enum:"fresh,stale,checking"`
+	CheckedAt   *time.Time `json:"checkedAt"`
+	AttemptedAt *time.Time `json:"attemptedAt"`
+	ReasonCode  string     `json:"reasonCode"`
+	Reason      string     `json:"reason"`
+}
+
+// AgyCapabilityObservationResponse is one UI-safe capability result.
+type AgyCapabilityObservationResponse struct {
+	State      string `json:"state" enum:"supported,unsupported,unknown"`
+	ReasonCode string `json:"reasonCode"`
+	Reason     string `json:"reason"`
+}
+
+// AgyAccountCapabilitiesResponse is the renderer-consumed capability view.
+type AgyAccountCapabilitiesResponse struct {
+	NativeLogin  AgyCapabilityObservationResponse `json:"nativeLogin"`
+	GlobalSwitch AgyCapabilityObservationResponse `json:"globalSwitch"`
+}
+
+// EnsureAgyAccountsRequest selects accounts for display reads.
+type EnsureAgyAccountsRequest struct {
+	AccountIDs                []string `json:"accountIds,omitempty"`
+	ForceAuthentication       bool     `json:"forceAuthentication,omitempty"`
+	ForceDeviceReconciliation bool     `json:"forceDeviceReconciliation,omitempty"`
+}
+
+// OpenAgyAccountLoginTerminalResponse is the standalone terminal opened for
+// one pending account's native Agy login flow.
+type OpenAgyAccountLoginTerminalResponse struct {
+	Operation     AgyAccountLoginResponse         `json:"operation"`
+	ShellTerminal AgyAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+// AgyAccountLoginResponse is the redacted login-operation projection.
+type AgyAccountLoginResponse struct {
+	OperationID string              `json:"operationId"`
+	AccountID   string              `json:"accountId,omitempty"`
+	Status      string              `json:"status" enum:"pending,verifying,unauthorized,retryable,completed,cancelled,failed,expired"`
+	ReasonCode  string              `json:"reasonCode"`
+	Reason      string              `json:"reason"`
+	Account     *AgyAccountResponse `json:"account,omitempty"`
+	ExpiresAt   time.Time           `json:"expiresAt"`
+}
+
+// AgyActiveLoginResponse lets a renderer remount reattach to a live login.
+type AgyActiveLoginResponse struct {
+	OperationID   string                          `json:"operationId"`
+	AccountID     string                          `json:"accountId,omitempty"`
+	Status        string                          `json:"status" enum:"pending,verifying,unauthorized,retryable,completed,cancelled,failed,expired"`
+	ReasonCode    string                          `json:"reasonCode"`
+	Reason        string                          `json:"reason"`
+	ExpiresAt     time.Time                       `json:"expiresAt"`
+	ShellTerminal AgyAccountLoginTerminalResponse `json:"shellTerminal"`
+}
+
+// AgyAccountLoginTerminalResponse contains only the mux identity and display
+// fields needed by the inline Settings terminal. Its private credential-home
+// working directory is deliberately excluded from the public API.
+type AgyAccountLoginTerminalResponse struct {
+	HandleID  string    `json:"handleId"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// StartAgyAccountSwitchRequest requests an idempotent global account change.
+type StartAgyAccountSwitchRequest struct {
+	TargetAccountID string `json:"targetAccountId" minLength:"1"`
+	// ExpectedAccountRevision is accepted temporarily for older clients and ignored.
+	ExpectedAccountRevision *int64 `json:"expectedAccountRevision,omitempty" minimum:"0" deprecated:"true"`
+	IdempotencyKey          string `json:"idempotencyKey" minLength:"1"`
+}
+
+// AgyAccountSwitchPhase is the retained public switch lifecycle.
+type AgyAccountSwitchPhase string
+
+// AgyAccountSwitchResponse contains only safe AO identifiers and progress.
+type AgyAccountSwitchResponse struct {
+	ID                     string                `json:"id"`
+	SourceKind             string                `json:"sourceKind" enum:"managed,device,none"`
+	SourceAccountID        string                `json:"sourceAccountId,omitempty"`
+	TargetAccountID        string                `json:"targetAccountId"`
+	Phase                  AgyAccountSwitchPhase `json:"phase" enum:"requested,checkpointing_source,activating_target,recovery_required,completed,failed"`
+	FailureCode            string                `json:"failureCode,omitempty"`
+	CredentialsCommittedAt *time.Time            `json:"credentialsCommittedAt,omitempty"`
+	CreatedAt              time.Time             `json:"createdAt"`
+	UpdatedAt              time.Time             `json:"updatedAt"`
+	CompletedAt            *time.Time            `json:"completedAt,omitempty"`
+}
