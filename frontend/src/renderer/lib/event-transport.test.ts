@@ -80,6 +80,10 @@ function accountSources() {
 	return EventSourceStub.instances.filter((source) => source.url.endsWith("/agents/codex/accounts/events"));
 }
 
+function agyAccountSources() {
+	return EventSourceStub.instances.filter((source) => source.url.endsWith("/agents/agy/accounts/events"));
+}
+
 beforeEach(() => {
 	EventSourceStub.instances = [];
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
@@ -105,12 +109,16 @@ describe("createEventTransport", () => {
 			const disconnect = createEventTransport(client).connect();
 			const cdc = cdcSources()[0];
 			const accounts = accountSources()[0];
+			const agyAccounts = agyAccountSources()[0];
 			disconnect();
 			cdc.onopen?.();
 			cdc.onerror?.();
 			accounts.onopen?.();
 			accounts.onerror?.();
 			accounts.emit("codex_account", JSON.stringify({ accounts: [], accountRevision: 1 }));
+			agyAccounts.onopen?.();
+			agyAccounts.onerror?.();
+			agyAccounts.emit("agy_account", JSON.stringify({ accounts: [], accountRevision: 1 }));
 			onStatusMock.mock.calls[0][0]();
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(client.invalidateQueries).not.toHaveBeenCalled();
@@ -118,18 +126,21 @@ describe("createEventTransport", () => {
 			expect(client.setQueryData).not.toHaveBeenCalled();
 			expect(setTransportHealthyMock).not.toHaveBeenCalled();
 			expect(getEventsConnectionState()).toBe("idle");
-			expect(EventSourceStub.instances).toHaveLength(2);
+			expect(EventSourceStub.instances).toHaveLength(3);
 		} finally { vi.useRealTimers(); }
 	});
 
-	it("opens the CDC and Codex account SSE connections on connect", () => {
+	it("opens the CDC, Codex account and Antigravity account SSE connections on connect", () => {
 		createEventTransport(fakeQueryClient()).connect();
 
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(EventSourceStub.instances).toHaveLength(3);
 		expect(cdcSources()).toHaveLength(1);
 		expect(accountSources()).toHaveLength(1);
+		expect(agyAccountSources()).toHaveLength(1);
 		expect(cdcSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		expect(accountSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/agents/codex/accounts/events");
+		expect(agyAccountSources()[0].url).toBe("http://127.0.0.1:3001/api/v1/agents/agy/accounts/events");
+		expect(agyAccountSources()[0].listeners).toContain("agy_account");
 		// All CDC event types plus onmessage are wired up.
 		expect(cdcSources()[0].listeners).toContain("session_updated");
 		expect(cdcSources()[0].listeners).toContain("review_run_created");
@@ -144,7 +155,7 @@ describe("createEventTransport", () => {
 
 		onStatusHandler();
 
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(EventSourceStub.instances).toHaveLength(3);
 	});
 
 	it("closes the old connection and reconnects when the base URL changes", () => {
@@ -201,6 +212,7 @@ describe("createEventTransport", () => {
 		createEventTransport(fakeQueryClient()).connect();
 		const first = cdcSources()[0];
 		const firstAccount = accountSources()[0];
+		const firstAgyAccount = agyAccountSources()[0];
 		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
 
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
@@ -208,7 +220,8 @@ describe("createEventTransport", () => {
 
 		expect(first.closed).toBe(true);
 		expect(firstAccount.closed).toBe(true);
-		expect(EventSourceStub.instances).toHaveLength(2);
+		expect(firstAgyAccount.closed).toBe(true);
+		expect(EventSourceStub.instances).toHaveLength(3);
 		expect(getEventsConnectionState()).toBe("disconnected");
 		expect(setTransportHealthyMock).toHaveBeenCalledWith("active", false);
 		expect(setTransportHealthyMock).toHaveBeenCalledWith("history", false);

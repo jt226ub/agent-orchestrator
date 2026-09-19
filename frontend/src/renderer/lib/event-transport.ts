@@ -10,6 +10,7 @@ import { agentSwitchesQueryRoot } from "../hooks/useAgentSwitches";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 import { agentSwitchVisibility } from "./agent-switch-visibility";
 import { codexAccountsQueryKey, writeCodexAccounts } from "../hooks/codex-accounts-state";
+import { agyAccountsQueryKey, writeAgyAccounts } from "../hooks/agy-accounts-state";
 import type { components } from "../../api/schema";
 import { editorHandoffQueryKey, editorHandoffQueryRoot } from "../hooks/useEditorHandoff";
 
@@ -65,6 +66,8 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			let sourceBaseUrl: string | undefined;
 			let accountSource: EventSource | undefined;
 			let accountSourceBaseUrl: string | undefined;
+			let agyAccountSource: EventSource | undefined;
+			let agyAccountSourceBaseUrl: string | undefined;
 			let disposed = false;
 			// Do not repeatedly cancel a slow fetch under continuous CDC traffic. A
 			// key receives at most one in-flight refresh and one queued catch-up.
@@ -92,6 +95,15 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				try {
 					const decoded = JSON.parse(String((event as MessageEvent).data)) as components["schemas"]["CodexAccountsResponse"];
 					writeCodexAccounts(queryClient, decoded, "replace");
+				} catch {
+					// A malformed transient event cannot replace the cached safe snapshot.
+				}
+			};
+			const applyAgyAccountEvent = (event: Event) => {
+				if (disposed || !("data" in event)) return;
+				try {
+					const decoded = JSON.parse(String((event as MessageEvent).data)) as components["schemas"]["AgyAccountsResponse"];
+					writeAgyAccounts(queryClient, decoded, "replace");
 				} catch {
 					// A malformed transient event cannot replace the cached safe snapshot.
 				}
@@ -236,10 +248,13 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					healthAttempt += 1;
 					source?.close();
 					accountSource?.close();
+					agyAccountSource?.close();
 					source = undefined;
 					accountSource = undefined;
+					agyAccountSource = undefined;
 					sourceBaseUrl = undefined;
 					accountSourceBaseUrl = undefined;
+					agyAccountSourceBaseUrl = undefined;
 					setEventsConnectionState("disconnected");
 					agentSwitchVisibility.setTransportHealthy("active", false);
 					agentSwitchVisibility.setTransportHealthy("history", false);
@@ -259,6 +274,21 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						accountSource.addEventListener("codex_account", applyAccountEvent);
 					} catch {
 						accountSource = undefined;
+					}
+				}
+				if (!agyAccountSource || agyAccountSourceBaseUrl !== baseUrl || agyAccountSource.readyState === EVENTSOURCE_CLOSED) {
+					agyAccountSource?.close();
+					agyAccountSourceBaseUrl = baseUrl;
+					try {
+						agyAccountSource = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/agents/agy/accounts/events`);
+						agyAccountSource.onopen = () => {
+							if (disposed) return;
+							void queryClient.invalidateQueries({ queryKey: agyAccountsQueryKey });
+						};
+						agyAccountSource.onerror = () => { if (agyAccountSource?.readyState === EVENTSOURCE_CLOSED) scheduleRetry(); };
+						agyAccountSource.addEventListener("agy_account", applyAgyAccountEvent);
+					} catch {
+						agyAccountSource = undefined;
 					}
 				}
 				// Keep a still-usable source on the same base URL; replace one the
@@ -340,6 +370,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				removeBaseUrlListener();
 				source?.close();
 				accountSource?.close();
+				agyAccountSource?.close();
 				setEventsConnectionState("idle");
 			};
 		},
