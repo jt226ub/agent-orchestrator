@@ -1,4 +1,4 @@
-import { BadgeCheck, Bot, CircleHelp, Cloud, Globe2, Keyboard, RefreshCw, Settings2, Smartphone, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Bot, CircleHelp, Cloud, Globe2, Keyboard, Layers, RefreshCw, Settings2, Smartphone, type LucideIcon } from "lucide-react";
 import { lazy, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import type { GlobalSettingsSection } from "../../stores/ui-store";
@@ -10,6 +10,7 @@ import { AgyAccountsSection } from "./AgyAccountsSection";
 import { ClaudeCodeUsageSection } from "./ClaudeCodeUsageSection";
 import { CodexAccountsSection } from "./CodexAccountsSection";
 import { ConnectMobileContent } from "./ConnectMobileContent";
+import { DefaultProfilesSection } from "./DefaultProfilesSection";
 import { GeneralSettingsSection } from "./GeneralSettingsSection";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 import { KeyboardShortcutsContent } from "./KeyboardShortcutsContent";
@@ -66,6 +67,12 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 				</div>
 			</>
 		),
+	},
+	{
+		id: "profiles",
+		icon: Layers,
+		label: (t) => t("settings.profiles"),
+		render: (_t, titleHidden) => <DefaultProfilesSection titleHidden={titleHidden} />,
 	},
 	{
 		id: "browserProfiles",

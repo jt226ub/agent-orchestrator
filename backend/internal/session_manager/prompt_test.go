@@ -1,10 +1,13 @@
 package sessionmanager
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 func TestBuildTaskPrompt_IssueContextStaysInTaskPrompt(t *testing.T) {
@@ -210,5 +213,82 @@ func TestBuildTaskPromptPreservesExplicitPublishingScope(t *testing.T) {
 		if got != prompt {
 			t.Fatalf("explicit user scope changed: %q", got)
 		}
+	}
+}
+
+func TestBuildProjectRules_LayersRoleRulesAndDefaultProfileRules(t *testing.T) {
+	project := t.TempDir()
+	rulesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "rules.md"), []byte("Project file rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "flash-coder.md"), []byte("Default profile rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildProjectRules(projectRulesConfig{
+		ProjectPath:      project,
+		Contract:         "Contract.",
+		RoleRules:        "Worker role rule.",
+		AgentRules:       "Inline rule.",
+		AgentRulesFile:   "rules.md",
+		ProfileRulesFile: "flash-coder.md",
+		ProfileRulesDir:  rulesDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Contract.\n\nWorker role rule.\n\nInline rule.\n\nProject file rule.\n\nDefault profile rule."
+	if got != want {
+		t.Fatalf("rules layered wrong:\n%s\nwant:\n%s", got, want)
+	}
+	// Without a profile rules dir the profile file is repo-relative, so the
+	// default profile's file must not resolve against the project.
+	if _, err := buildProjectRules(projectRulesConfig{ProjectPath: project, ProfileRulesFile: "flash-coder.md"}); err == nil {
+		t.Fatal("profile rules file resolved outside the project without a rules dir")
+	}
+	if _, err := buildProjectRules(projectRulesConfig{ProjectPath: project, ProfileRulesFile: "../rules.md", ProfileRulesDir: rulesDir}); err == nil {
+		t.Fatal("traversal out of the rules dir was accepted")
+	}
+}
+
+func TestManagerReadsDefaultProfilesAndRoleRulesFromTheDataDir(t *testing.T) {
+	dataDir := t.TempDir()
+	m := &Manager{dataDir: dataDir, logger: slog.New(slog.DiscardHandler)}
+	if got := m.defaultProfiles(); got != nil {
+		t.Fatalf("missing document produced profiles: %v", got)
+	}
+	if got := m.roleRules(domain.KindWorker); got != "" {
+		t.Fatalf("missing role rules produced text: %q", got)
+	}
+	if err := os.MkdirAll(RulesDir(dataDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(RoleRulesPath(dataDir, domain.KindWorker), []byte("Worker.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(RoleRulesPath(dataDir, domain.KindOrchestrator), []byte("Orchestrator.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(DefaultProfilesPath(dataDir), []byte(`{"profiles":{"flash-coder":{"agent":"agy","rulesFile":"flash-coder.md"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.roleRules(domain.KindWorker); got != "Worker." {
+		t.Fatalf("worker rules = %q", got)
+	}
+	if got := m.roleRules(domain.KindOrchestrator); got != "Orchestrator." {
+		t.Fatalf("orchestrator rules = %q", got)
+	}
+	profiles := m.defaultProfiles()
+	if profiles["flash-coder"].Harness != domain.HarnessAgy {
+		t.Fatalf("default profiles = %+v", profiles)
+	}
+	if err := os.WriteFile(DefaultProfilesPath(dataDir), []byte(`{"profiles":{"bad":{"agent":"nope"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.defaultProfiles(); got != nil {
+		t.Fatalf("invalid document was not ignored: %v", got)
+	}
+	if m2 := (&Manager{}); m2.defaultProfiles() != nil || m2.roleRules(domain.KindWorker) != "" {
+		t.Fatal("manager without a data dir read something")
 	}
 }

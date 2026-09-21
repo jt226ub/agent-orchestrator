@@ -1289,7 +1289,33 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 	if !ok {
 		return domain.ProjectRecord{}, nil
 	}
+	// The user's default profiles sit under the project's own so every
+	// consumer of the loaded config (spawn, restore, prompt assembly) can name
+	// them; a project profile of the same name wins.
+	row.Config = row.Config.WithDefaultProfiles(m.defaultProfiles())
 	return row, nil
+}
+
+// defaultProfiles reads the user-level profiles document from the data dir.
+// A missing file means no defaults; an unreadable or invalid one is logged
+// and ignored so a broken document cannot stop every spawn.
+func (m *Manager) defaultProfiles() map[string]domain.RoleProfile {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(DefaultProfilesPath(m.dataDir)) //nolint:gosec // daemon-owned data dir
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			m.logger.Warn("default profiles unreadable", "path", DefaultProfilesPath(m.dataDir), "error", err)
+		}
+		return nil
+	}
+	doc, err := domain.ParseDefaultProfiles(data)
+	if err != nil {
+		m.logger.Warn("default profiles ignored", "path", DefaultProfilesPath(m.dataDir), "error", err)
+		return nil
+	}
+	return doc.Profiles
 }
 
 type defaultBranchRefreshTarget struct {
@@ -4288,7 +4314,12 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	// profile's rules file, and for orchestrators the active template's plan,
 	// which is the most specific text the agent reads.
 	contract := m.contractRules()
+	roleRules := m.roleRules(kind)
 	profileRulesFile := project.Config.ProfileRulesFile(profile)
+	profileRulesDir := ""
+	if project.Config.IsDefaultProfile(profile) {
+		profileRulesDir = RulesDir(m.dataDir)
+	}
 	cfg := systemPromptConfig{
 		Role:       promptRoleForKind(kind),
 		Standalone: projectID == "",
@@ -4300,8 +4331,10 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		rules, err := buildProjectRules(projectRulesConfig{
 			ProjectPath:       project.Path,
 			Contract:          contract,
+			RoleRules:         roleRules,
 			AgentRules:        project.Config.OrchestratorRules,
 			ProfileRulesFile:  profileRulesFile,
+			ProfileRulesDir:   profileRulesDir,
 			TemplateRulesFile: project.Config.TemplateRulesFile(),
 		})
 		if err != nil {
@@ -4321,9 +4354,11 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		rules, err := buildProjectRules(projectRulesConfig{
 			ProjectPath:      project.Path,
 			Contract:         contract,
+			RoleRules:        roleRules,
 			AgentRules:       project.Config.AgentRules,
 			AgentRulesFile:   project.Config.AgentRulesFile,
 			ProfileRulesFile: profileRulesFile,
+			ProfileRulesDir:  profileRulesDir,
 		})
 		if err != nil {
 			return "", err
@@ -4362,10 +4397,46 @@ func (m *Manager) contractRules() string {
 	return strings.TrimSpace(string(data))
 }
 
+// roleRules returns the user's standing rules for one session kind, from
+// <dataDir>/rules/worker.md or orchestrator.md, or "" when none is written.
+// They follow the contract and precede the project's own rules.
+func (m *Manager) roleRules(kind domain.SessionKind) string {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(RoleRulesPath(m.dataDir, kind)) //nolint:gosec // daemon-owned data dir
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// RulesDir holds the daemon-wide rules files: the operating contract, the
+// per-role rules and every default profile's rules file.
+func RulesDir(dataDir string) string {
+	return filepath.Join(dataDir, "rules")
+}
+
 // ContractRulesPath is where an installer drops the operating contract that
 // every session's standing rules begin with.
 func ContractRulesPath(dataDir string) string {
-	return filepath.Join(dataDir, "rules", "contract.md")
+	return filepath.Join(RulesDir(dataDir), "contract.md")
+}
+
+// RoleRulesPath is the rules file every session of one kind reads after the
+// contract: orchestrator.md for orchestrators, worker.md for everything else.
+func RoleRulesPath(dataDir string, kind domain.SessionKind) string {
+	name := "worker.md"
+	if kind == domain.KindOrchestrator {
+		name = "orchestrator.md"
+	}
+	return filepath.Join(RulesDir(dataDir), name)
+}
+
+// DefaultProfilesPath is the user-level profiles document every project's
+// profiles are merged over.
+func DefaultProfilesPath(dataDir string) string {
+	return filepath.Join(dataDir, "profiles.json")
 }
 
 // aoSkillPointer is appended to every agent system prompt. It points the agent

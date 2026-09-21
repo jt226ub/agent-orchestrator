@@ -26,8 +26,10 @@ const approvedLiterals: Record<string, readonly string[]> = {
 		"main", "ao",
 		"No workflow settings for scratch projects.",
 		"Tracker intake is not available for scratch projects.",
-		"rules/flash-coder.md", "KEY=VALUE", "rules/plan-flash-first.md",
+		"rules/plan-flash-first.md",
 	],
+	"components/settings/DefaultProfilesSection.tsx": ["flash-coder.md"],
+	"components/settings/ProfileCard.tsx": ["rules/flash-coder.md", "KEY=VALUE"],
 	"components/SessionInspector.tsx": ["PR #"],
 	"components/Sidebar.tsx": ["Agent Orchestrator", "daemon"],
 	"components/WindowTitlebar.tsx": [

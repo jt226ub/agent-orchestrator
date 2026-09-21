@@ -44,7 +44,9 @@ type APIDeps struct {
 	// answers 501 rather than panicking, matching the other optional surfaces.
 	Conversations controllers.ConversationService
 	// Settings is the daemon-owned preference surface.
-	Settings            controllers.SettingsService
+	Settings controllers.SettingsService
+	// DefaultProfiles is the user-level profiles document and the rules files.
+	DefaultProfiles     controllers.DefaultProfilesService
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
 	Events              cdcSubscriber
@@ -123,6 +125,7 @@ type API struct {
 	shellTerms      *controllers.ShellTerminalsController
 	conversations   *controllers.ConversationsController
 	settings        *controllers.SettingsController
+	defaultProfiles *controllers.DefaultProfilesController
 	dev             *controllers.DevController
 	browser         *controllers.BrowserController
 	system          *controllers.SystemController
@@ -158,24 +161,25 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
-		desktop:       &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
-		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
-		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
-		push:          &controllers.PushController{Registry: deps.Push},
-		imports:       &controllers.ImportController{Svc: deps.Import},
-		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
-		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
-		settings:      &controllers.SettingsController{Svc: deps.Settings},
-		dev:           &controllers.DevController{Import: deps.DevImport},
-		browser:       &controllers.BrowserController{Svc: deps.Browser},
-		system:        &controllers.SystemController{Checks: deps.SystemChecks},
-		identity:      &controllers.IdentityController{HostID: deps.HostID},
-		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
-		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
-		agentAuth:     &controllers.AgentAuthController{Svc: deps.AgentAuth},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		desktop:         &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
+		usage:           &controllers.UsageController{Svc: deps.UsageSummary},
+		prs:             &controllers.PRsController{Svc: deps.PRs},
+		reviews:         &controllers.ReviewsController{Svc: deps.Reviews},
+		notifications:   &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		push:            &controllers.PushController{Registry: deps.Push},
+		imports:         &controllers.ImportController{Svc: deps.Import},
+		shellTerms:      &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		conversations:   &controllers.ConversationsController{Svc: deps.Conversations},
+		settings:        &controllers.SettingsController{Svc: deps.Settings},
+		defaultProfiles: &controllers.DefaultProfilesController{Svc: deps.DefaultProfiles},
+		dev:             &controllers.DevController{Import: deps.DevImport},
+		browser:         &controllers.BrowserController{Svc: deps.Browser},
+		system:          &controllers.SystemController{Checks: deps.SystemChecks},
+		identity:        &controllers.IdentityController{HostID: deps.HostID},
+		endpoints:       &controllers.EndpointsController{Source: deps.Endpoints},
+		systemInstall:   &controllers.SystemInstallController{Installer: deps.Installer},
+		agentAuth:       &controllers.AgentAuthController{Svc: deps.AgentAuth},
+		events:          &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -210,6 +214,7 @@ func (a *API) Register(root chi.Router) {
 			a.shellTerms.Register(r)
 			a.conversations.Register(r)
 			a.settings.Register(r)
+			a.defaultProfiles.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
 			a.system.Register(r)

@@ -55,6 +55,10 @@ type ProjectConfig struct {
 	// and folded into the role override; the session remembers its name so a
 	// restore reapplies the same bundle.
 	Profiles map[string]RoleProfile `json:"profiles,omitempty"`
+	// defaultProfiles names the Profiles entries WithDefaultProfiles added from
+	// the user's default profiles; their rules files live under the data dir,
+	// not the repo. Never serialized: defaults are merged on every load.
+	defaultProfiles map[string]struct{}
 	// Templates are named assignments of profiles to the role slots (worker,
 	// orchestrator, reviewers) plus the orchestrator's delegation plan.
 	// ApplyTemplate binds one in a single step; a template never changes a profile.
@@ -429,44 +433,8 @@ func (c ProjectConfig) Validate() error {
 			}
 		}
 	}
-	for name, profile := range c.Profiles {
-		if err := validateNameComponent("profiles."+name, name); err != nil {
-			return err
-		}
-		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
-			return fmt.Errorf("profiles: name %q must be non-empty without surrounding whitespace", name)
-		}
-		if profile.Harness != "" && !profile.Harness.IsKnown() {
-			return fmt.Errorf("profiles.%s.agent: unknown harness %q", name, profile.Harness)
-		}
-		if err := profile.AgentConfig.Validate(); err != nil {
-			return fmt.Errorf("profiles.%s.%w", name, err)
-		}
-		if err := validateRepoRelative(profile.RulesFile); err != nil {
-			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
-		}
-		if q := profile.Quota; q != nil {
-			for field, value := range map[string]float64{"warnBelowPercent": q.WarnBelowPercent, "refuseBelowPercent": q.RefuseBelowPercent} {
-				if value < 0 || value > 100 {
-					return fmt.Errorf("profiles.%s.quota.%s: %v is not between 0 and 100", name, field, value)
-				}
-			}
-			if q.WarnBelowPercent > 0 && q.RefuseBelowPercent > q.WarnBelowPercent {
-				return fmt.Errorf("profiles.%s.quota: refuseBelowPercent %v is above warnBelowPercent %v", name, q.RefuseBelowPercent, q.WarnBelowPercent)
-			}
-		}
-		if fb := profile.Fallback; fb != nil && strings.TrimSpace(fb.Profile) != "" {
-			target := strings.TrimSpace(fb.Profile)
-			if profile.Quota == nil {
-				return fmt.Errorf("profiles.%s.fallback: set quota for a fallback to apply", name)
-			}
-			if target == name {
-				return fmt.Errorf("profiles.%s.fallback: a profile cannot fall back to itself", name)
-			}
-			if _, ok := c.Profiles[target]; !ok {
-				return fmt.Errorf("profiles.%s.fallback.profile: unknown profile %q", name, target)
-			}
-		}
+	if err := validateProfiles(c.Profiles); err != nil {
+		return err
 	}
 	for name, tpl := range c.Templates {
 		if err := validateNameComponent("templates."+name, name); err != nil {
@@ -537,6 +505,52 @@ func validateNoWhitespaceField(name, value string) error {
 	}
 	if strings.TrimSpace(value) != value {
 		return fmt.Errorf("%s: must not have leading or trailing whitespace", name)
+	}
+	return nil
+}
+
+// validateProfiles checks one profiles map on its own: names, harness, agent
+// config, rules file, quota and fallback references within the same map. The
+// project config and the user-level default profiles share it.
+func validateProfiles(profiles map[string]RoleProfile) error {
+	for name, profile := range profiles {
+		if err := validateNameComponent("profiles."+name, name); err != nil {
+			return err
+		}
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
+			return fmt.Errorf("profiles: name %q must be non-empty without surrounding whitespace", name)
+		}
+		if profile.Harness != "" && !profile.Harness.IsKnown() {
+			return fmt.Errorf("profiles.%s.agent: unknown harness %q", name, profile.Harness)
+		}
+		if err := profile.AgentConfig.Validate(); err != nil {
+			return fmt.Errorf("profiles.%s.%w", name, err)
+		}
+		if err := validateRepoRelative(profile.RulesFile); err != nil {
+			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
+		}
+		if q := profile.Quota; q != nil {
+			for field, value := range map[string]float64{"warnBelowPercent": q.WarnBelowPercent, "refuseBelowPercent": q.RefuseBelowPercent} {
+				if value < 0 || value > 100 {
+					return fmt.Errorf("profiles.%s.quota.%s: %v is not between 0 and 100", name, field, value)
+				}
+			}
+			if q.WarnBelowPercent > 0 && q.RefuseBelowPercent > q.WarnBelowPercent {
+				return fmt.Errorf("profiles.%s.quota: refuseBelowPercent %v is above warnBelowPercent %v", name, q.RefuseBelowPercent, q.WarnBelowPercent)
+			}
+		}
+		if fb := profile.Fallback; fb != nil && strings.TrimSpace(fb.Profile) != "" {
+			target := strings.TrimSpace(fb.Profile)
+			if profile.Quota == nil {
+				return fmt.Errorf("profiles.%s.fallback: set quota for a fallback to apply", name)
+			}
+			if target == name {
+				return fmt.Errorf("profiles.%s.fallback: a profile cannot fall back to itself", name)
+			}
+			if _, ok := profiles[target]; !ok {
+				return fmt.Errorf("profiles.%s.fallback.profile: unknown profile %q", name, target)
+			}
+		}
 	}
 	return nil
 }
