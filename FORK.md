@@ -47,10 +47,13 @@ session is delivered whole (before it, everything after the first kilobyte could
 while the agent was still consuming the paste). The design and decisions live in the LLM Drive
 Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D31).
 
-**Installed versus merged.** The installed build carries PRs #1–#11. PRs #12–#14 are merged
-or open on `fork/main` and wait for the next rebuild (the recipe below). PR #14 lives in the
-`ao pty-host` process that each terminal session keeps alive across daemon restarts, so a
-session started before the rebuild keeps the old behaviour until it is killed and restored.
+**Installed versus merged.** The installed build (2026-09-21 evening) carries PRs #1–#14, the
+whole of `fork/main`. Remember for later rebuilds that PR #14 lives in the `ao pty-host`
+process each terminal session keeps alive across daemon restarts: a session started before a
+rebuild keeps the old host until it is killed and restored (`ao session kill` then
+`ao session restore`). Known rough edge: `ao session tail` prints the terminal's raw bytes,
+colour codes included; a plain-text option is a candidate follow-up, as are a turn-end notice
+to the owning orchestrator and a blocking `ao session wait <id>`.
 
 **The installed build.** `frontend/out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app`,
 built from `fork/main` with `npm run package` (which runs `build:daemon`, `build:tmux`,
