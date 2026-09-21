@@ -21,8 +21,16 @@ const (
 	initialConPTYRows    = 50
 	// A pty-host must never let one stalled viewer block PTY output, status
 	// probes, or every other viewer. Each client gets a bounded writer queue;
-	// filling it drops only that client and lets the terminal layer re-attach.
+	// filling it drops only that client's output and lets the terminal layer
+	// re-attach. Its input is still read until it disconnects.
 	hostClientWriteBuffer = 256
+	// hostInputQueue bounds the frames of keystrokes waiting for the PTY. The
+	// tty input queue is small (1 KiB on macOS) and a TUI that repaints on
+	// every keystroke drains it slowly, so a pasted message can take seconds
+	// to go in. Queuing keeps each connection's reader free to keep parsing
+	// frames meanwhile; a full queue applies back-pressure to the sender
+	// rather than dropping keystrokes.
+	hostInputQueue = 1024
 )
 
 // ptyConn is the host's handle to the running agent's pseudo-terminal.
@@ -55,6 +63,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		cfg:       cfg,
 		clients:   make(map[net.Conn]*clientState),
 		surface:   newRenderedSurface(initialConPTYColumns, initialConPTYRows),
+		input:     make(chan []byte, hostInputQueue),
 		shutdownC: make(chan struct{}),
 	}
 	return h.run(ctx)
@@ -71,6 +80,7 @@ type clientState struct {
 
 	out       chan []byte
 	done      chan struct{}
+	stopOnce  sync.Once
 	closeOnce sync.Once
 }
 
@@ -99,11 +109,37 @@ func (c *clientState) enqueue(frame []byte) bool {
 	}
 }
 
-func (c *clientState) close(conn net.Conn) {
-	c.closeOnce.Do(func() {
+// stopOutput gives up on a client's output side: the writer goroutine exits and
+// the peer sees EOF on its reads, so a viewer re-attaches with a fresh snapshot.
+// The read side stays open on purpose. A sender that only writes (the daemon
+// delivering a message) may already have its remaining frames on the socket,
+// and closing the connection here would discard them; handleConn keeps parsing
+// until the peer closes, then closes the connection itself.
+func (c *clientState) stopOutput(conn net.Conn) {
+	c.stopOnce.Do(func() {
 		close(c.done)
+		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+			return
+		}
+		// No half-close on this transport: fall back to a full close so the
+		// peer still notices the drop.
+		c.closeConn(conn)
+	})
+}
+
+// closeConn releases the connection once the reader is done with it (or the
+// host is shutting down).
+func (c *clientState) closeConn(conn net.Conn) {
+	c.closeOnce.Do(func() {
 		_ = conn.Close()
 	})
+}
+
+// close stops output and closes the connection.
+func (c *clientState) close(conn net.Conn) {
+	c.stopOutput(conn)
+	c.closeConn(conn)
 }
 
 // host holds the mutable state for a single pty-host session.
@@ -116,6 +152,10 @@ type host struct {
 	// curCols/curRows are the grid the host last applied to the shared PTY (0,0
 	// = none applied yet). Guarded by mu; used to skip redundant resizes.
 	curCols, curRows int
+
+	// input carries keystrokes from every connection to the single goroutine
+	// that writes the PTY (see pumpInput), in arrival order.
+	input chan []byte
 
 	shutdownOnce sync.Once
 	shutdownC    chan struct{} // closed when Shutdown is called
@@ -164,8 +204,9 @@ func (h *host) applyLargestLocked() {
 
 // run is the main event loop.
 func (h *host) run(ctx context.Context) error {
-	// Pump PTY output to ring + broadcast.
+	// Pump PTY output to ring + broadcast, and queued keystrokes into the PTY.
 	go h.pumpPTY()
+	go h.pumpInput()
 
 	// Watch for ctx cancellation and trigger shutdown.
 	go func() {
@@ -257,6 +298,35 @@ func (h *host) pumpPTY() {
 	// still connect and read scrollback.
 }
 
+// pumpInput writes queued keystrokes to the PTY one frame at a time, in the
+// order they were queued. A PTY write blocks while the tty input queue is full
+// (the agent is still consuming an earlier paste), and that wait must not stall
+// the connection readers or lose what a sender has already written.
+func (h *host) pumpInput() {
+	for {
+		select {
+		case <-h.shutdownC:
+			return
+		case payload := <-h.input:
+			if _, alive := h.cfg.PTY.ExitCode(); alive {
+				continue
+			}
+			_, _ = h.cfg.PTY.Write(payload)
+		}
+	}
+}
+
+// queueInput hands keystrokes to pumpInput. A full queue blocks the calling
+// connection reader (back-pressure on that sender) instead of dropping input.
+func (h *host) queueInput(payload []byte) {
+	buf := make([]byte, len(payload))
+	copy(buf, payload)
+	select {
+	case h.input <- buf:
+	case <-h.shutdownC:
+	}
+}
+
 // broadcast queues msg to all connected clients. Socket writes happen only in
 // each client's writer goroutine, never while h.mu is held: a viewer that stops
 // reading therefore cannot freeze status probes, new attaches, or other
@@ -286,7 +356,7 @@ func (h *host) broadcast(msg []byte) {
 	}
 	h.mu.Unlock()
 	for _, client := range dropped {
-		client.client.close(client.conn)
+		client.client.stopOutput(client.conn)
 	}
 }
 
@@ -304,7 +374,7 @@ func (h *host) sendTo(conn net.Conn, msg []byte) {
 		delete(h.clients, conn)
 		h.applyLargestLocked()
 		h.mu.Unlock()
-		client.close(conn)
+		client.stopOutput(conn)
 		return
 	}
 	h.mu.Unlock()
@@ -337,7 +407,7 @@ func (h *host) removeClient(conn net.Conn, client *clientState) {
 		h.applyLargestLocked()
 	}
 	h.mu.Unlock()
-	client.close(conn)
+	client.stopOutput(conn)
 }
 
 // handleConn manages the lifecycle of a single client connection.
@@ -363,7 +433,10 @@ func (h *host) handleConn(conn net.Conn) {
 	h.clients[conn] = client
 	h.mu.Unlock()
 
-	defer h.removeClient(conn, client)
+	defer func() {
+		h.removeClient(conn, client)
+		client.closeConn(conn)
+	}()
 
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		h.handleClientMsg(conn, msgType, payload)
@@ -387,7 +460,7 @@ func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 	switch msgType {
 	case MsgTerminalInput:
 		if _, alive := h.cfg.PTY.ExitCode(); !alive {
-			_, _ = h.cfg.PTY.Write(payload)
+			h.queueInput(payload)
 		}
 
 	case MsgResize:

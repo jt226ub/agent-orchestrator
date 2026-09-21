@@ -763,3 +763,78 @@ func TestShutdownViaCtxCancel(t *testing.T) {
 		t.Fatal("expected pty.Close() on ctx cancel")
 	}
 }
+
+// TestTerminalInputSurvivesSenderCloseWhilePTYIsSlow reproduces a lost
+// multi-chunk message: the daemon's send client writes its input frames and
+// closes without ever reading, while the PTY drains slowly (a TUI that
+// re-renders on every keystroke) and keeps producing output. The host's writer
+// hits the closed peer, and the frames still buffered on the socket must reach
+// the PTY anyway, in order, ending with the Enter.
+func TestTerminalInputSurvivesSenderCloseWhilePTYIsSlow(t *testing.T) {
+	f := startServe(t, 109)
+	defer f.cancel()
+
+	// A write-only sender, like clientSendMessage: never reads a frame.
+	conn, err := net.Dial("tcp", f.addr)
+	if err != nil {
+		t.Fatalf("dial %s: %v", f.addr, err)
+	}
+	chunks := []string{strings.Repeat("a", 512), strings.Repeat("b", 512), strings.Repeat("c", 200), "\r"}
+	writeChunk := func(chunk string) {
+		t.Helper()
+		frame, err := EncodeMessage(MsgTerminalInput, []byte(chunk))
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		if _, err := conn.Write(frame); err != nil {
+			t.Fatalf("write frame: %v", err)
+		}
+	}
+	// The first chunk parks the host in PTY.Write: nothing reads the fake
+	// PTY's input yet, just as a full tty input queue blocks the real one.
+	writeChunk(chunks[0])
+	time.Sleep(100 * time.Millisecond)
+	// The rest of the message lands on the socket while the host is stuck.
+	for _, chunk := range chunks[1:] {
+		writeChunk(chunk)
+	}
+	// Meanwhile the terminal keeps repainting; the sender never reads, so its
+	// output queue overflows and the host gives up on it.
+	repaint := []byte(strings.Repeat("repaint ", 1024))
+	for i := 0; i < 4*hostClientWriteBuffer; i++ {
+		if _, err := f.pty.WriteOutput(repaint); err != nil {
+			t.Fatalf("pty output: %v", err)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	_ = conn.Close()
+
+	// Now the PTY drains. Everything the sender wrote must arrive, in order.
+	want := strings.Join(chunks, "")
+	got := make([]byte, 0, len(want))
+	buf := make([]byte, 256)
+	deadline := time.After(5 * time.Second)
+	for len(got) < len(want) {
+		type readResult struct {
+			n   int
+			err error
+		}
+		res := make(chan readResult, 1)
+		go func() {
+			n, err := f.pty.ReadInput(buf)
+			res <- readResult{n, err}
+		}()
+		select {
+		case r := <-res:
+			if r.err != nil {
+				t.Fatalf("read pty input after %d bytes: %v", len(got), r.err)
+			}
+			got = append(got, buf[:r.n]...)
+		case <-deadline:
+			t.Fatalf("pty received %d of %d bytes; the tail of the message was lost", len(got), len(want))
+		}
+	}
+	if string(got) != want {
+		t.Fatalf("pty input mismatch: got %d bytes, want %d", len(got), len(want))
+	}
+}
