@@ -169,6 +169,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	scrubInheritedSessionMarkers()
 	if cwd, err := os.Getwd(); err == nil {
 		cfg.StartupWorkingDirectory = cwd
 	}
