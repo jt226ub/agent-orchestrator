@@ -2199,3 +2199,84 @@ func TestEmptyCloneOnboardingCreatesFirstWorkspace(t *testing.T) {
 		})
 	}
 }
+
+func newManagerWithDefaultProfiles(t *testing.T, defaults map[string]domain.RoleProfile) project.Manager {
+	t.Helper()
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return project.NewWithDeps(project.Deps{Store: store, DefaultProfiles: func() map[string]domain.RoleProfile { return defaults }})
+}
+
+func TestManager_SetConfigAcceptsDefaultProfileNames(t *testing.T) {
+	ctx := context.Background()
+	defaults := map[string]domain.RoleProfile{
+		"flash-coder": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.8-flash-high"}, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}},
+		"pro-expert":  {Harness: domain.HarnessAgy},
+	}
+	m := newManagerWithDefaultProfiles(t, defaults)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := domain.ProjectConfig{
+		Worker:       domain.RoleOverride{Profile: "flash-coder"},
+		Orchestrator: domain.RoleOverride{Profile: "pro-expert"},
+		// A project profile may fall back to a default one.
+		Profiles: map[string]domain.RoleProfile{"mine": {Harness: domain.HarnessAgy, Quota: &domain.ProfileQuota{RefuseBelowPercent: 5}, Fallback: &domain.ProfileFallback{Profile: "flash-coder"}}},
+	}
+	got, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config == nil || got.Config.Worker.Profile != "flash-coder" || len(got.Config.Profiles) != 1 {
+		t.Fatalf("stored config = %#v, want the project's own profile only", got.Config)
+	}
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Worker: domain.RoleOverride{Profile: "missing"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	// Without the defaults in view the same save is still refused.
+	plain := newManager(t)
+	if _, err := plain.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = plain.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Worker: domain.RoleOverride{Profile: "flash-coder"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+}
+
+func TestManager_ApplyTemplateBindsDefaultProfilesWithoutStoringThem(t *testing.T) {
+	ctx := context.Background()
+	defaults := map[string]domain.RoleProfile{"flash-coder": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.8-flash-high"}}, "pro-expert": {Harness: domain.HarnessAgy, AgentConfig: domain.AgentConfig{Model: "gemini-3.1-pro-high"}}}
+	m := newManagerWithDefaultProfiles(t, defaults)
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := domain.ProjectConfig{
+		Profiles:  map[string]domain.RoleProfile{"mine": {Harness: domain.HarnessCodex}},
+		Templates: map[string]domain.WorkflowTemplate{"flash-first": {Worker: "flash-coder", Orchestrator: "mine", Reviewers: []string{"pro-expert"}}},
+	}
+	if _, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ApplyTemplate(ctx, "ao", project.ApplyTemplateInput{Template: "flash-first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Config.Worker.Profile != "flash-coder" || got.Config.Orchestrator.Profile != "mine" || got.Config.Template != "flash-first" {
+		t.Fatalf("bound config = %#v", got.Config)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Profile != "pro-expert" || got.Config.Reviewers[0].Harness != domain.ReviewerHarness(domain.HarnessAgy) || got.Config.Reviewers[0].AgentConfig.Model != "gemini-3.1-pro-high" {
+		t.Fatalf("reviewer snapshot = %#v, want the default profile's harness and model", got.Config.Reviewers)
+	}
+	if len(got.Config.Profiles) != 1 || got.Config.Profiles["mine"].Harness != domain.HarnessCodex {
+		t.Fatalf("stored profiles = %#v, want only the project's own", got.Config.Profiles)
+	}
+	plain := newManager(t)
+	if _, err := plain.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatal(err)
+	}
+	// Without the defaults in view a template naming one is refused at save.
+	_, err = plain.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Templates: cfg.Templates, Profiles: cfg.Profiles}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+}

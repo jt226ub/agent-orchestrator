@@ -69,12 +69,13 @@ type SessionTeardowner interface {
 
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
-	store          Store
-	sessions       SessionTeardowner
-	clock          func() time.Time
-	telemetry      ports.EventSink
-	defaultHarness domain.AgentHarness
-	logger         *slog.Logger
+	store           Store
+	sessions        SessionTeardowner
+	clock           func() time.Time
+	telemetry       ports.EventSink
+	defaultHarness  domain.AgentHarness
+	logger          *slog.Logger
+	defaultProfiles func() map[string]domain.RoleProfile
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -98,6 +99,10 @@ type Deps struct {
 	// Logger receives structured logs. Left nil, the service falls back to
 	// slog.Default, keeping service-focused tests logger-free.
 	Logger *slog.Logger
+	// DefaultProfiles returns the user-level default profiles, which a
+	// project's role slots, templates and fallbacks may name without
+	// declaring them. Left nil, only the project's own profiles are known.
+	DefaultProfiles func() map[string]domain.RoleProfile
 }
 
 // New returns a project service backed by the given durable store.
@@ -112,12 +117,13 @@ func NewWithDeps(d Deps) *Service {
 		defaultHarness = domain.AgentHarness(config.DefaultAgent)
 	}
 	s := &Service{
-		store:          d.Store,
-		sessions:       d.Sessions,
-		clock:          d.Clock,
-		telemetry:      d.Telemetry,
-		defaultHarness: defaultHarness,
-		logger:         d.Logger,
+		store:           d.Store,
+		sessions:        d.Sessions,
+		clock:           d.Clock,
+		telemetry:       d.Telemetry,
+		defaultHarness:  defaultHarness,
+		logger:          d.Logger,
+		defaultProfiles: d.DefaultProfiles,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
@@ -267,7 +273,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	var projectConfig domain.ProjectConfig
 	if in.Config != nil {
-		if err := in.Config.Validate(); err != nil {
+		if err := m.validateConfig(*in.Config); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 		}
 		projectConfig = *in.Config
@@ -697,7 +703,7 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
 		return Project{}, apierr.Invalid("DISPLAY_NAME_TOO_LONG", "Display name must be 20 characters or fewer", nil)
 	}
-	if err := in.Config.Validate(); err != nil {
+	if err := m.validateConfig(in.Config); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
@@ -733,7 +739,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	if err := in.Config.Validate(); err != nil {
+	if err := m.validateConfig(in.Config); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
@@ -773,13 +779,14 @@ func (m *Service) ApplyTemplate(ctx context.Context, id domain.ProjectID, in App
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	cfg, err := row.Config.ApplyTemplate(in.Template)
+	cfg, err := m.withDefaultProfiles(row.Config).ApplyTemplate(in.Template)
 	if err != nil {
 		return Project{}, apierr.Invalid("UNKNOWN_TEMPLATE", err.Error(), nil)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
+	cfg = cfg.StripDefaultProfiles()
 	if row.Kind.WithDefault() == domain.ProjectKindScratch {
 		if err := validateScratchProjectConfig(cfg); err != nil {
 			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
@@ -790,6 +797,21 @@ func (m *Service) ApplyTemplate(ctx context.Context, id domain.ProjectID, in App
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	return m.projectFromRow(ctx, row), nil
+}
+
+// withDefaultProfiles lays the user's default profiles under cfg's own, the
+// way the session manager does at spawn, so validation and template binding
+// accept the names every picker offers.
+func (m *Service) withDefaultProfiles(cfg domain.ProjectConfig) domain.ProjectConfig {
+	if m.defaultProfiles == nil {
+		return cfg
+	}
+	return cfg.WithDefaultProfiles(m.defaultProfiles())
+}
+
+// validateConfig validates cfg with the default profiles in view.
+func (m *Service) validateConfig(cfg domain.ProjectConfig) error {
+	return m.withDefaultProfiles(cfg).Validate()
 }
 
 func validateScratchProjectConfig(cfg domain.ProjectConfig) error {

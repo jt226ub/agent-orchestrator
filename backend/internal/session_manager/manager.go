@@ -1297,22 +1297,31 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 }
 
 // defaultProfiles reads the user-level profiles document from the data dir.
-// A missing file means no defaults; an unreadable or invalid one is logged
-// and ignored so a broken document cannot stop every spawn.
 func (m *Manager) defaultProfiles() map[string]domain.RoleProfile {
-	if strings.TrimSpace(m.dataDir) == "" {
+	return LoadDefaultProfiles(m.dataDir, m.logger)
+}
+
+// LoadDefaultProfiles reads the user-level profiles document from the data
+// dir, for every consumer that must see a project's config the way a spawn
+// does. A missing file means no defaults; an unreadable or invalid one is
+// logged and ignored so a broken document cannot stop every spawn or save.
+func LoadDefaultProfiles(dataDir string, logger *slog.Logger) map[string]domain.RoleProfile {
+	if strings.TrimSpace(dataDir) == "" {
 		return nil
 	}
-	data, err := os.ReadFile(DefaultProfilesPath(m.dataDir)) //nolint:gosec // daemon-owned data dir
+	if logger == nil {
+		logger = slog.Default()
+	}
+	data, err := os.ReadFile(DefaultProfilesPath(dataDir)) //nolint:gosec // daemon-owned data dir
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			m.logger.Warn("default profiles unreadable", "path", DefaultProfilesPath(m.dataDir), "error", err)
+			logger.Warn("default profiles unreadable", "path", DefaultProfilesPath(dataDir), "error", err)
 		}
 		return nil
 	}
 	doc, err := domain.ParseDefaultProfiles(data)
 	if err != nil {
-		m.logger.Warn("default profiles ignored", "path", DefaultProfilesPath(m.dataDir), "error", err)
+		logger.Warn("default profiles ignored", "path", DefaultProfilesPath(dataDir), "error", err)
 		return nil
 	}
 	return doc.Profiles
