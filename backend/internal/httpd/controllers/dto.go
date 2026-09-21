@@ -138,6 +138,20 @@ func newGetProjectResponse(res projectsvc.GetResult) (GetProjectResponse, error)
 	}, nil
 }
 
+// SessionOutputQuery selects how much terminal scrollback to return.
+type SessionOutputQuery struct {
+	Lines *int `query:"lines,omitempty" description:"Number of trailing terminal lines to return (default 80, at most 2000)."`
+}
+
+// SessionOutputResponse is the tail of a session's terminal, the same
+// scrollback the desktop terminal shows, for an orchestrator to read a
+// worker's output rather than infer it from activity alone.
+type SessionOutputResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Lines     int              `json:"lines" minimum:"1"`
+	Output    string           `json:"output"`
+}
+
 // SessionIDParam is the {sessionId} path parameter shared by session routes.
 type SessionIDParam struct {
 	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`

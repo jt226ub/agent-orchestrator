@@ -5302,6 +5302,67 @@ paths:
       summary: Configure whether PR completion terminates the session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/output:
+    get:
+      operationId: getSessionOutput
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Number of trailing terminal lines to return (default 80, at most
+          2000).
+        in: query
+        name: lines
+        schema:
+          description: Number of trailing terminal lines to return (default 80, at
+            most 2000).
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionOutputResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the tail of a session's terminal scrollback
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/pin:
     delete:
       operationId: unpinSession
@@ -12413,6 +12474,20 @@ components:
       required:
       - supported
       - targetMode
+      type: object
+    SessionOutputResponse:
+      properties:
+        lines:
+          minimum: 1
+          type: integer
+        output:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - lines
+      - output
       type: object
     SessionPRCISummary:
       properties:

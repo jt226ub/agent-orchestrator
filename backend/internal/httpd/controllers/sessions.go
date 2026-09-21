@@ -84,6 +84,7 @@ type SessionService interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
+	Output(ctx context.Context, id domain.SessionID, lines int) (sessionsvc.OutputResult, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	ExitAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error)
 	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
@@ -169,6 +170,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
+	r.Get("/sessions/{sessionId}/output", c.output)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
 	r.Get("/sessions/{sessionId}/preview/server", c.previewServerStatus)
@@ -405,6 +407,30 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+// output returns the tail of a session's terminal scrollback so an
+// orchestrator can read what a worker printed.
+func (c *SessionsController) output(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/output")
+		return
+	}
+	lines := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("lines")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "OUTPUT_LINES_INVALID", "lines must be a positive integer", nil)
+			return
+		}
+		lines = parsed
+	}
+	result, err := c.Svc.Output(r.Context(), sessionID(r), lines)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionOutputResponse{SessionID: result.SessionID, Lines: result.Lines, Output: result.Output})
 }
 
 func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {

@@ -34,6 +34,7 @@ import (
 )
 
 type fakeSessionService struct {
+	output                     string
 	sessions                   map[domain.SessionID]domain.Session
 	sent                       string
 	sentAttachment             *ports.SpawnAttachment
@@ -242,6 +243,16 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 	}
 	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator, RequestedMode: requestedMode})
 	return s, err
+}
+
+func (f *fakeSessionService) Output(_ context.Context, id domain.SessionID, lines int) (sessionsvc.OutputResult, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.OutputResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if lines <= 0 {
+		lines = 80
+	}
+	return sessionsvc.OutputResult{SessionID: id, Lines: lines, Output: f.output}, nil
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -1386,6 +1397,43 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_OutputReturnsTerminalTail(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.output = "$ go test ./...\nok\n"
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/output?lines=40", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET output = %d, want 200; body=%s", status, body)
+	}
+	var res controllers.SessionOutputResponse
+	mustJSON(t, body, &res)
+	if res.SessionID != "ao-1" || res.Lines != 40 || res.Output != svc.output {
+		t.Fatalf("output = %#v", res)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/output", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET output without lines = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &res)
+	if res.Lines != 80 {
+		t.Fatalf("default lines = %d, want 80", res.Lines)
+	}
+
+	for _, raw := range []string{"0", "-5", "many"} {
+		body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/output?lines="+raw, "")
+		if status != http.StatusBadRequest {
+			t.Fatalf("lines=%s status = %d, want 400; body=%s", raw, status, body)
+		}
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/missing/output", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unknown session status = %d, want 404; body=%s", status, body)
 	}
 }
 

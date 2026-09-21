@@ -94,6 +94,19 @@ type exitAgentCommander interface {
 	ExitAgent(context.Context, domain.SessionID) (domain.SessionRecord, error)
 }
 
+// outputCommander reads a session's terminal scrollback; the production
+// manager implements it, test doubles may not.
+type outputCommander interface {
+	Output(ctx context.Context, id domain.SessionID, lines int) (string, error)
+}
+
+// OutputResult is the tail of one session's terminal.
+type OutputResult struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Lines     int              `json:"lines"`
+	Output    string           `json:"output"`
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -602,6 +615,33 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 		return RestoreOutcome{}, err
 	}
 	return RestoreOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
+// Output returns the last lines of a session's terminal so a caller (an
+// orchestrator, typically) can read what a worker printed. A session without
+// a live terminal is a conflict, not an empty page.
+func (s *Service) Output(ctx context.Context, id domain.SessionID, lines int) (OutputResult, error) {
+	manager, ok := s.manager.(outputCommander)
+	if !ok {
+		return OutputResult{}, apierr.Conflict("SESSION_OUTPUT_UNSUPPORTED", "This build cannot read session output", nil)
+	}
+	output, err := manager.Output(ctx, id, lines)
+	if errors.Is(err, ports.ErrSessionNotFound) {
+		return OutputResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if errors.Is(err, sessionmanager.ErrSessionNotRunning) {
+		return OutputResult{}, apierr.Conflict("SESSION_NOT_RUNNING", "The session has no running terminal", nil)
+	}
+	if err != nil {
+		return OutputResult{}, toAPIError(err)
+	}
+	if lines <= 0 {
+		lines = sessionmanager.DefaultOutputLines
+	}
+	if lines > sessionmanager.MaxOutputLines {
+		lines = sessionmanager.MaxOutputLines
+	}
+	return OutputResult{SessionID: id, Lines: lines, Output: output}, nil
 }
 
 // ExitAgent stops only the agent controller while preserving the AO session,
