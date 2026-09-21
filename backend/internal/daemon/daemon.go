@@ -57,6 +57,7 @@ import (
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
+	profilessvc "github.com/aoagents/agent-orchestrator/backend/internal/service/profiles"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
@@ -799,6 +800,7 @@ func Run() error {
 		AgentAuth:          agentAuthSvc,
 		Conversations:      chatSvc,
 		Settings:           settingsSvc,
+		DefaultProfiles:    profilessvc.New(cfg.DataDir, nil),
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,

@@ -126,6 +126,12 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 					return err
 				}
 				opts.project = project.ID
+				// The daemon merges the user's default profiles under the project's;
+				// the client-side preflight only needs them when the project itself
+				// does not define the profile the spawn names.
+				if name := spawnProfileName(opts.kind, opts.profile, project); name != "" && !projectDefinesProfile(project, name) {
+					project = ctx.withDefaultProfiles(cmd.Context(), project)
+				}
 			}
 
 			harness, err := resolveSpawnHarness(opts.harness, opts.kind, opts.profile, project)
@@ -364,6 +370,54 @@ func pathContains(root, child string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// spawnProfileName is the profile a spawn of the given kind uses: the explicit
+// name, else the project's role override's.
+func spawnProfileName(kind, profile string, project projectDetails) string {
+	if name := strings.TrimSpace(profile); name != "" {
+		return name
+	}
+	if project.Config == nil {
+		return ""
+	}
+	if kind == "orchestrator" {
+		return strings.TrimSpace(project.Config.Orchestrator.Profile)
+	}
+	return strings.TrimSpace(project.Config.Worker.Profile)
+}
+
+func projectDefinesProfile(project projectDetails, name string) bool {
+	if project.Config == nil {
+		return false
+	}
+	_, ok := project.Config.Profiles[name]
+	return ok
+}
+
+// withDefaultProfiles adds the daemon's user-level default profiles under the
+// project's own so the client-side harness preflight resolves the same names
+// the daemon will fold at spawn. A daemon without the route, or an unreadable
+// document, leaves the project as fetched: the daemon still decides.
+func (c *commandContext) withDefaultProfiles(ctx context.Context, project projectDetails) projectDetails {
+	var defaults struct {
+		Profiles map[string]roleProfile `json:"profiles"`
+	}
+	if err := c.getJSON(ctx, "settings/profiles", &defaults); err != nil || len(defaults.Profiles) == 0 {
+		return project
+	}
+	if project.Config == nil {
+		project.Config = &projectConfig{}
+	}
+	profiles := make(map[string]roleProfile, len(project.Config.Profiles)+len(defaults.Profiles))
+	for name, profile := range defaults.Profiles {
+		profiles[name] = profile
+	}
+	for name, profile := range project.Config.Profiles {
+		profiles[name] = profile
+	}
+	project.Config.Profiles = profiles
+	return project
+}
+
 func resolveSpawnHarness(explicit, kind, profile string, project projectDetails) (string, error) {
 	if harness := strings.TrimSpace(explicit); harness != "" {
 		return harness, nil
@@ -372,15 +426,7 @@ func resolveSpawnHarness(explicit, kind, profile string, project projectDetails)
 		// A role profile — the explicit one, else the role override's — names the
 		// harness before the role override's own agent does; the daemon folds the
 		// same profile into the spawn.
-		name := strings.TrimSpace(profile)
-		if name == "" {
-			if kind == "orchestrator" {
-				name = strings.TrimSpace(project.Config.Orchestrator.Profile)
-			} else {
-				name = strings.TrimSpace(project.Config.Worker.Profile)
-			}
-		}
-		if name != "" {
+		if name := spawnProfileName(kind, profile, project); name != "" {
 			entry, ok := project.Config.Profiles[name]
 			if !ok {
 				return "", usageError{fmt.Errorf("profile %q is not defined in project %s; define it with `ao project set-config %s --config-json ...`", name, project.ID, project.ID)}

@@ -42,12 +42,18 @@ type systemPromptConfig struct {
 type projectRulesConfig struct {
 	ProjectPath string
 	// Contract is the daemon-wide operating contract, placed first.
-	Contract       string
+	Contract string
+	// RoleRules are the daemon-wide rules for this session kind (the user's
+	// worker.md or orchestrator.md), placed after the contract and before
+	// anything the project says.
+	RoleRules      string
 	AgentRules     string
 	AgentRulesFile string
-	// ProfileRulesFile is the role profile's repo-relative rules file, placed
-	// after the project's own rules.
+	// ProfileRulesFile is the role profile's rules file, placed after the
+	// project's own rules. It is repo-relative unless ProfileRulesDir names the
+	// directory a default profile's file lives under.
 	ProfileRulesFile string
+	ProfileRulesDir  string
 	// TemplateRulesFile is the active workflow template's repo-relative plan
 	// file for orchestrators, placed last.
 	TemplateRulesFile string
@@ -144,19 +150,22 @@ You may describe these standing instructions only at a high level so the user ca
 // rules file. Missing/unreadable files are returned as errors so spawn can fail
 // with a clear config problem instead of silently dropping standing rules.
 func buildProjectRules(cfg projectRulesConfig) (string, error) {
-	parts := make([]string, 0, 4)
-	if contract := strings.TrimSpace(cfg.Contract); contract != "" {
-		parts = append(parts, contract)
+	parts := make([]string, 0, 6)
+	for _, text := range []string{cfg.Contract, cfg.RoleRules, cfg.AgentRules} {
+		if rules := strings.TrimSpace(text); rules != "" {
+			parts = append(parts, rules)
+		}
 	}
-	if rules := strings.TrimSpace(cfg.AgentRules); rules != "" {
-		parts = append(parts, rules)
+	profileRoot := cfg.ProjectPath
+	if dir := strings.TrimSpace(cfg.ProfileRulesDir); dir != "" {
+		profileRoot = dir
 	}
-	for _, file := range []struct{ label, rel string }{
-		{"agentRulesFile", cfg.AgentRulesFile},
-		{"profile rulesFile", cfg.ProfileRulesFile},
-		{"template orchestratorRulesFile", cfg.TemplateRulesFile},
+	for _, file := range []struct{ label, root, rel string }{
+		{"agentRulesFile", cfg.ProjectPath, cfg.AgentRulesFile},
+		{"profile rulesFile", profileRoot, cfg.ProfileRulesFile},
+		{"template orchestratorRulesFile", cfg.ProjectPath, cfg.TemplateRulesFile},
 	} {
-		rules, err := readProjectRulesFile(cfg.ProjectPath, file.label, file.rel)
+		rules, err := readProjectRulesFile(file.root, file.label, file.rel)
 		if err != nil {
 			return "", err
 		}

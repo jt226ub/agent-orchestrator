@@ -144,6 +144,12 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{ //nolint:gosec // Public OpenAPI type names include reset-credit contracts; no credential value is stored here.
 	"ControllersSettingsResponse":                          "SettingsResponse",
+	"ControllersDefaultProfilesResponse":                   "DefaultProfilesResponse",
+	"ControllersRulesFileSummaryResponse":                  "RulesFileSummaryResponse",
+	"ControllersUpdateDefaultProfilesRequest":              "UpdateDefaultProfilesRequest",
+	"ControllersRulesFileResponse":                         "RulesFileResponse",
+	"ControllersUpdateRulesFileRequest":                    "UpdateRulesFileRequest",
+	"ControllersRulesFileNameParam":                        "RulesFileNameParam",
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":              "ConversationSnapshotResponse",
@@ -776,6 +782,61 @@ func shellTerminalOperations() []operation {
 			reqBody: controllers.UpdateCloudOfferingRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/settings/profiles", id: "getDefaultProfiles", tag: "settings",
+			summary: "Read the user-level default profiles and the daemon-wide rules files",
+			resps: []respUnit{
+				{http.StatusOK, controllers.DefaultProfilesResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/settings/profiles", id: "updateDefaultProfiles", tag: "settings",
+			summary: "Replace the user-level default profiles",
+			reqBody: controllers.UpdateDefaultProfilesRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DefaultProfilesResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/settings/rules/{name}", id: "getRulesFile", tag: "settings",
+			summary:    "Read one daemon-wide rules file",
+			pathParams: []any{controllers.RulesFileNameParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RulesFileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/settings/rules/{name}", id: "updateRulesFile", tag: "settings",
+			summary:    "Create or replace one daemon-wide rules file",
+			pathParams: []any{controllers.RulesFileNameParam{}},
+			reqBody:    controllers.UpdateRulesFileRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RulesFileResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/settings/rules/{name}", id: "deleteRulesFile", tag: "settings",
+			summary:    "Delete one daemon-wide rules file",
+			pathParams: []any{controllers.RulesFileNameParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},

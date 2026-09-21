@@ -2541,6 +2541,43 @@ type UpdateCloudOfferingRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// DefaultProfilesResponse is the user-level profiles document every project's
+// profiles are merged over, plus the rules files present in the data dir.
+type DefaultProfilesResponse struct {
+	Profiles   map[string]domain.RoleProfile `json:"profiles"`
+	RulesFiles []RulesFileSummaryResponse    `json:"rulesFiles"`
+}
+
+// RulesFileSummaryResponse describes one daemon-wide rules file.
+type RulesFileSummaryResponse struct {
+	Name      string    `json:"name"`
+	SizeBytes int64     `json:"sizeBytes" minimum:"0"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// UpdateDefaultProfilesRequest replaces the user-level profiles document.
+type UpdateDefaultProfilesRequest struct {
+	Profiles map[string]domain.RoleProfile `json:"profiles"`
+}
+
+// RulesFileResponse is one daemon-wide rules file with its content.
+type RulesFileResponse struct {
+	Name      string    `json:"name"`
+	Content   string    `json:"content"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// UpdateRulesFileRequest creates or replaces one rules file.
+type UpdateRulesFileRequest struct {
+	Content *string `json:"content"`
+}
+
+// RulesFileNameParam names a rules file under the data dir's rules folder:
+// a flat Markdown file name such as worker.md.
+type RulesFileNameParam struct {
+	Name string `json:"name" path:"name"`
+}
+
 // capabilityNames lists the abilities a provider has, sorted so a client sees a
 // stable list rather than Go's map order. Only true entries are named: a
 // capability the driver reports as false is one it cannot do, which is the same

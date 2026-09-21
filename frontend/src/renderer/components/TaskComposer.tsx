@@ -20,6 +20,7 @@ import {
 	useEnsureAgentReadiness,
 } from "../hooks/useAgentReadinessQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
+import { useDefaultProfilesQuery } from "../hooks/useDefaultProfilesQuery";
 import { useSettings } from "../hooks/useSettings";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { useCloudOrg } from "../hooks/useCloudOrg";
@@ -265,7 +266,10 @@ export function TaskComposer({
 	// A role profile, when the project defines any, is picked first: the worker
 	// override's profile by default, and the profile's agent and model become
 	// the resolved defaults the daemon would fold in.
-	const projectProfiles = projectQuery.data?.config?.profiles ?? {};
+	// The user's default profiles are offered under the project's own; a
+	// project profile of the same name wins, as the daemon merges them.
+	const defaultProfiles = useDefaultProfilesQuery().data?.profiles ?? {};
+	const projectProfiles = { ...defaultProfiles, ...(projectQuery.data?.config?.profiles ?? {}) };
 	const profileNames = Object.keys(projectProfiles).sort((a, b) => a.localeCompare(b));
 	const defaultProfile = projectQuery.data?.config?.worker?.profile ?? "";
 	const selectedProfile = profileTouched ? profile : defaultProfile;
