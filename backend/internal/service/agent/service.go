@@ -50,20 +50,21 @@ type modelCatalogCall struct {
 // Service owns normalized harness readiness and the unchanged model catalog.
 // Consumers share coordinator checks instead of probing adapters directly.
 type Service struct {
-	agents        []agentregistry.HarnessAgent
-	readiness     *readinessCoordinator
-	cache         ports.AgentModelCatalogCache
-	discoverer    ports.AgentModelDiscoverer
-	projects      ProjectLookup
-	sessions      SessionUsageLookup
-	resolverMu    map[string]*sync.Mutex
-	modelCallMu   sync.Mutex
-	modelCalls    map[string]*modelCatalogCall
-	codexAccounts *codexAccountManager
-	codexSwitches *codexAccountSwitchCoordinator
-	agyCapacity   *agyCapacityCoordinator
-	agyAccounts   *agyAccountManager
-	agySwitches   *agyAccountSwitchCoordinator
+	agents          []agentregistry.HarnessAgent
+	readiness       *readinessCoordinator
+	cache           ports.AgentModelCatalogCache
+	discoverer      ports.AgentModelDiscoverer
+	projects        ProjectLookup
+	sessions        SessionUsageLookup
+	resolverMu      map[string]*sync.Mutex
+	modelCallMu     sync.Mutex
+	modelCalls      map[string]*modelCatalogCall
+	codexAccounts   *codexAccountManager
+	codexSwitches   *codexAccountSwitchCoordinator
+	agyCapacity     *agyCapacityCoordinator
+	agyAccounts     *agyAccountManager
+	claudeCodeUsage *claudeCodeUsageCoordinator
+	agySwitches     *agyAccountSwitchCoordinator
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
@@ -129,6 +130,12 @@ func NewWithDeps(deps Deps) *Service {
 			svc.agyCapacity.now = deps.Clock
 		}
 	}
+	if svc.claudeCodeUsage != nil {
+		svc.claudeCodeUsage = newClaudeCodeUsageCoordinator(deps.Context, svc.claudeCodeUsage.reader, deps.Logger)
+		if deps.Clock != nil {
+			svc.claudeCodeUsage.now = deps.Clock
+		}
+	}
 	if deps.AgyAccountRoot != "" && deps.AgyGlobalHome != "" {
 		svc.agyAccounts = newAgyAccountManager(deps.Context, deps.AgyAccountRoot, deps.AgyPendingRoot, deps.AgySwitchStagingRoot, deps.AgyGlobalHome, deps.AgyAccounts, deps.Logger, deps.AgyOperationGate)
 		if deps.Clock != nil {
@@ -180,11 +187,15 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 	}
 	svc := &Service{agents: agents, readiness: newReadinessCoordinator(readinessCoordinatorConfig{Agents: agents}), cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}}
 	for _, item := range agents {
-		if item.Harness != domain.HarnessAgy {
-			continue
-		}
-		if reader, ok := item.Agent.(ports.AgyCapacityReader); ok {
-			svc.agyCapacity = newAgyCapacityCoordinator(context.Background(), reader, nil)
+		switch item.Harness {
+		case domain.HarnessAgy:
+			if reader, ok := item.Agent.(ports.AgyCapacityReader); ok {
+				svc.agyCapacity = newAgyCapacityCoordinator(context.Background(), reader, nil)
+			}
+		case domain.HarnessClaudeCode:
+			if reader, ok := item.Agent.(ports.ClaudeCodeUsageReader); ok {
+				svc.claudeCodeUsage = newClaudeCodeUsageCoordinator(context.Background(), reader, nil)
+			}
 		}
 	}
 	return svc

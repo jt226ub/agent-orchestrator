@@ -74,7 +74,7 @@ func (c *agyCapacityCoordinator) current() domain.AgyCapacitySnapshot {
 
 // ensure returns a fresh snapshot, joining an in-flight read when one exists.
 // force bypasses the display TTL and the failure backoff.
-func (c *agyCapacityCoordinator) ensure(ctx context.Context, force bool) (domain.AgyCapacitySnapshot, error) {
+func (c *agyCapacityCoordinator) ensure(ctx context.Context, force bool) (domain.AgyCapacitySnapshot, error) { //nolint:dupl // Antigravity and Claude Code keep separate usage contracts by design (FORK.md).
 	if err := ctx.Err(); err != nil {
 		return domain.AgyCapacitySnapshot{}, err
 	}

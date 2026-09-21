@@ -7,6 +7,7 @@ import { BrowserProfilesSection } from "./BrowserProfilesSection";
 import { CloudCredentialsSection } from "./CloudCredentialsSection";
 import { CloudProviderSection } from "./CloudProviderSection";
 import { AgyAccountsSection } from "./AgyAccountsSection";
+import { ClaudeCodeUsageSection } from "./ClaudeCodeUsageSection";
 import { CodexAccountsSection } from "./CodexAccountsSection";
 import { ConnectMobileContent } from "./ConnectMobileContent";
 import { GeneralSettingsSection } from "./GeneralSettingsSection";
@@ -56,7 +57,10 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		label: (t) => t("settings.agents"),
 		render: (_t, titleHidden) => (
 			<>
-				<CodexAccountsSection titleHidden={titleHidden} />
+				<ClaudeCodeUsageSection />
+				<div className="border-t border-border/60 pt-5">
+					<CodexAccountsSection titleHidden={titleHidden} />
+				</div>
 				<div className="border-t border-border/60 pt-5">
 					<AgyAccountsSection titleHidden={titleHidden} />
 				</div>

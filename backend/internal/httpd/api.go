@@ -26,6 +26,7 @@ type APIDeps struct {
 	CodexAccounts      controllers.CodexAccountService
 	AgyAccounts        controllers.AgyAccountService
 	AgyCapacity        controllers.AgyCapacityService
+	ClaudeCodeUsage    controllers.ClaudeCodeUsageService
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
@@ -103,32 +104,33 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	deps          APIDeps
-	agents        *controllers.AgentsController
-	codexAccounts *controllers.CodexAccountsController
-	agyAccounts   *controllers.AgyAccountsController
-	agyCapacity   *controllers.AgyCapacityController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	desktop       *controllers.DesktopWorkspaceController
-	usage         *controllers.UsageController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	push          *controllers.PushController
-	imports       *controllers.ImportController
-	shellTerms    *controllers.ShellTerminalsController
-	conversations *controllers.ConversationsController
-	settings      *controllers.SettingsController
-	dev           *controllers.DevController
-	browser       *controllers.BrowserController
-	system        *controllers.SystemController
-	identity      *controllers.IdentityController
-	endpoints     *controllers.EndpointsController
-	systemInstall *controllers.SystemInstallController
-	agentAuth     *controllers.AgentAuthController
-	events        *EventsController
+	cfg             config.Config
+	deps            APIDeps
+	agents          *controllers.AgentsController
+	codexAccounts   *controllers.CodexAccountsController
+	agyAccounts     *controllers.AgyAccountsController
+	agyCapacity     *controllers.AgyCapacityController
+	claudeCodeUsage *controllers.ClaudeCodeUsageController
+	projects        *controllers.ProjectsController
+	sessions        *controllers.SessionsController
+	desktop         *controllers.DesktopWorkspaceController
+	usage           *controllers.UsageController
+	prs             *controllers.PRsController
+	reviews         *controllers.ReviewsController
+	notifications   *controllers.NotificationsController
+	push            *controllers.PushController
+	imports         *controllers.ImportController
+	shellTerms      *controllers.ShellTerminalsController
+	conversations   *controllers.ConversationsController
+	settings        *controllers.SettingsController
+	dev             *controllers.DevController
+	browser         *controllers.BrowserController
+	system          *controllers.SystemController
+	identity        *controllers.IdentityController
+	endpoints       *controllers.EndpointsController
+	systemInstall   *controllers.SystemInstallController
+	agentAuth       *controllers.AgentAuthController
+	events          *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -141,9 +143,10 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		agents: &controllers.AgentsController{
 			Catalog: deps.Agents,
 		},
-		codexAccounts: &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
-		agyAccounts:   &controllers.AgyAccountsController{Svc: deps.AgyAccounts},
-		agyCapacity:   &controllers.AgyCapacityController{Svc: deps.AgyCapacity},
+		codexAccounts:   &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
+		agyAccounts:     &controllers.AgyAccountsController{Svc: deps.AgyAccounts},
+		agyCapacity:     &controllers.AgyCapacityController{Svc: deps.AgyCapacity},
+		claudeCodeUsage: &controllers.ClaudeCodeUsageController{Svc: deps.ClaudeCodeUsage},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -194,6 +197,7 @@ func (a *API) Register(root chi.Router) {
 			a.codexAccounts.Register(r)
 			a.agyAccounts.Register(r)
 			a.agyCapacity.Register(r)
+			a.claudeCodeUsage.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.desktop.Register(r)
