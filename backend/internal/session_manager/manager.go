@@ -856,6 +856,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if cfg.Profile, err = m.admitProfileQuota(ctx, cfg, project.Config); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
+	// A profile's own permission mode is the user's decision for that role;
+	// it must not be displaced by the parent orchestrator's conversation
+	// setting below. An explicit mode on the request still wins over both.
+	profilePermissions := project.Config.Profiles[cfg.Profile].AgentConfig.Permissions
 	if project.Config, err = project.Config.WithProfile(cfg.Kind, cfg.Profile); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
@@ -870,7 +874,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if projectKind == domain.ProjectKindScratch && strings.TrimSpace(cfg.Branch) != "" {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", ErrScratchBranchUnsupported)
 	}
-	if cfg.ParentSessionID != "" && cfg.AgentConfig.Permissions == "" {
+	if cfg.ParentSessionID != "" && cfg.AgentConfig.Permissions == "" && profilePermissions == "" {
 		permissions, err := m.inheritedSpawnPermissions(ctx, cfg.ProjectID, cfg.ParentSessionID)
 		if err != nil {
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)

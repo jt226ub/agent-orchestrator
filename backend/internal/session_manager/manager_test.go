@@ -1465,6 +1465,46 @@ func TestSpawn_InheritsChatOrchestratorPermissions(t *testing.T) {
 	}
 }
 
+func TestSpawn_ProfilePermissionsBeatInheritedChatPermissions(t *testing.T) {
+	m, st, rt, _ := newManager()
+	project := st.projects["mer"]
+	project.Config.Profiles = map[string]domain.RoleProfile{
+		"flash-coder": {Harness: domain.HarnessClaudeCode, AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions}},
+		"reviewer":    {Harness: domain.HarnessClaudeCode},
+	}
+	project.Config.Worker.Profile = "flash-coder"
+	st.projects["mer"] = project
+	st.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	st.conversations["mer-0"] = domain.ConversationRecord{
+		SessionID: "mer-0", Settings: domain.ConversationSettings{ApprovalMode: domain.PermissionModeAuto},
+	}
+
+	// The role's profile sets a mode: the parent's conversation setting does not displace it.
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, ParentSessionID: "mer-0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env[EnvPermissionMode]; got != string(domain.PermissionModeBypassPermissions) {
+		t.Fatalf("profile worker permission environment = %q, want %q", got, domain.PermissionModeBypassPermissions)
+	}
+	// An explicit mode on the request still wins over the profile.
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, ParentSessionID: "mer-0", AgentConfig: ports.AgentConfig{Permissions: domain.PermissionModeDefault}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env[EnvPermissionMode]; got != string(domain.PermissionModeDefault) {
+		t.Fatalf("explicit worker permission environment = %q, want %q", got, domain.PermissionModeDefault)
+	}
+	// A profile without a mode still inherits the parent's conversation setting.
+	st.conversations["mer-0"] = domain.ConversationRecord{
+		SessionID: "mer-0", Settings: domain.ConversationSettings{ApprovalMode: domain.PermissionModeBypassPermissions},
+	}
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, ParentSessionID: "mer-0", Profile: "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.lastCfg.Env[EnvPermissionMode]; got != string(domain.PermissionModeBypassPermissions) {
+		t.Fatalf("modeless profile worker permission environment = %q, want inherited %q", got, domain.PermissionModeBypassPermissions)
+	}
+}
+
 func TestSpawn_IgnoresNonOrchestratorParent(t *testing.T) {
 	m, st, rt, _ := newManager()
 	st.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: "mer", Kind: domain.KindWorker}
