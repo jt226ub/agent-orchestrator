@@ -40,8 +40,17 @@ quota admission; #6 Antigravity account management; #7 Claude Code subscription 
 #8 default profiles and editable rules files in Settings; #9 the daemon drops an inherited
 `CLAUDE_CODE_CHILD_SESSION` marker at boot; #10 project saves and template binds accept
 default profile names; #11 a profile's permission mode beats a parent orchestrator's inherited
-mode (request > profile > parent conversation > project default). The design and decisions live in the LLM Drive
-Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D29).
+mode (request > profile > parent conversation > project default); #12 `ao session cleanup`
+leaves a worktree that a live session still uses; #13 `ao session tail` reads a session's
+terminal scrollback; #14 the pty-host queues keystrokes so a multi-line `ao send` to a TUI
+session is delivered whole (before it, everything after the first kilobyte could be lost
+while the agent was still consuming the paste). The design and decisions live in the LLM Drive
+Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D31).
+
+**Installed versus merged.** The installed build carries PRs #1–#11. PRs #12–#14 are merged
+or open on `fork/main` and wait for the next rebuild (the recipe below). PR #14 lives in the
+`ao pty-host` process that each terminal session keeps alive across daemon restarts, so a
+session started before the rebuild keeps the old behaviour until it is killed and restored.
 
 **The installed build.** `frontend/out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app`,
 built from `fork/main` with `npm run package` (which runs `build:daemon`, `build:tmux`,
