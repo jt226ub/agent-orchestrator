@@ -39,7 +39,8 @@ capacity; #2 role profiles; #3 workflow templates; #4 New Task profile chip; #5 
 quota admission; #6 Antigravity account management; #7 Claude Code subscription and usage;
 #8 default profiles and editable rules files in Settings; #9 the daemon drops an inherited
 `CLAUDE_CODE_CHILD_SESSION` marker at boot; #10 project saves and template binds accept
-default profile names. The design and decisions live in the LLM Drive
+default profile names; #11 a profile's permission mode beats a parent orchestrator's inherited
+mode (request > profile > parent conversation > project default). The design and decisions live in the LLM Drive
 Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D29).
 
 **The installed build.** `frontend/out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app`,
