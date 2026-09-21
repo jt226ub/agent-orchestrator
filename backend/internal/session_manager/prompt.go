@@ -250,6 +250,7 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - `+"`ao status`"+` - inspect project, session, PR, and review state.
 - `+"`ao session ls --project %s`"+` - list sessions for this project.
 - `+"`ao session get <worker-session-id>`"+` - inspect a worker session's details.
+- `+"`ao session tail <worker-session-id> --lines 80`"+` - read the last lines a worker printed; its activity state says only whether a turn is running, not whether the task is done.
 - `+"`ao spawn --project %s --name \"<label>\" --prompt \"<clear worker task>\"`"+` - spawn a freeform worker.
 - `+"`ao spawn --project %s --name \"<label>\" --issue <issue-id>`"+` - spawn a worker for an issue.
 - `+"`--name`"+` is required: a deliberate sidebar label so the user can see what each worker is working on at a glance; labels must be 20 characters or fewer.

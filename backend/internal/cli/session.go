@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -193,6 +194,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(newSessionListCommand(ctx))
 	cmd.AddCommand(newSessionGetCommand(ctx))
+	cmd.AddCommand(newSessionTailCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionExitAgentCommand(ctx))
@@ -240,6 +242,29 @@ func newSessionGetCommand(ctx *commandContext) *cobra.Command {
 	}
 	f := cmd.Flags()
 	addSessionProjectFlag(f, &opts.project, "Project id to scope the lookup")
+	f.BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newSessionTailCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	var lines int
+	cmd := &cobra.Command{
+		Use:   "tail <id>",
+		Short: "Print the last lines of a session's terminal",
+		Long:  "Print the tail of a session's terminal scrollback, the same text the desktop terminal shows, so an orchestrator can read what a worker printed instead of inferring it from its activity state.",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.tailSession(cmd.Context(), cmd, id, lines, opts)
+		},
+	}
+	f := cmd.Flags()
+	addSessionProjectFlag(f, &opts.project, "Project id to scope the lookup")
+	f.IntVar(&lines, "lines", 80, "Number of trailing terminal lines to print (at most 2000)")
 	f.BoolVar(&opts.json, "json", false, "Output as JSON")
 	return cmd
 }
@@ -601,6 +626,36 @@ func (c *commandContext) getSession(ctx context.Context, cmd *cobra.Command, id 
 		return writeJSON(cmd.OutOrStdout(), sessionResponse{Session: sess})
 	}
 	return writeSessionDetails(cmd, sess)
+}
+
+type sessionOutputResponse struct {
+	SessionID string `json:"sessionId"`
+	Lines     int    `json:"lines"`
+	Output    string `json:"output"`
+}
+
+func (c *commandContext) tailSession(ctx context.Context, cmd *cobra.Command, id string, lines int, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	if lines <= 0 {
+		return usageError{fmt.Errorf("--lines must be a positive integer")}
+	}
+	var res sessionOutputResponse
+	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id)+"/output?lines="+strconv.Itoa(lines), &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	out := res.Output
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	_, err := fmt.Fprint(cmd.OutOrStdout(), out)
+	return err
 }
 
 func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {

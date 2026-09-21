@@ -67,6 +67,8 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 					sessionJSON("demo-2", "demo", "orchestrator", "idle", false)+`,`+
 					sessionJSON("demo-1", "demo", "worker", "working", false)+`]}`)
 			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -706,9 +708,68 @@ func TestSessionRename_SuccessWithProjectScope(t *testing.T) {
 	}
 }
 
+func TestSessionTail_PrintsTerminalOutput(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "tail", "demo-1", "--lines", "40")
+	if err != nil {
+		t.Fatalf("session tail failed: %v\nstderr=%s", err, errOut)
+	}
+	if out != "$ go test ./...\nok\n" {
+		t.Fatalf("unexpected tail output: %q", out)
+	}
+	want := []string{"GET /api/v1/sessions/demo-1/output?lines=40"}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionTail_JSONOutputDecodes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "tail", "demo-1", "--project", "demo", "--json")
+	if err != nil {
+		t.Fatalf("session tail --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionOutputResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("session tail --json output is not decodable: %v\noutput=%s", err, out)
+	}
+	if got.SessionID != "demo-1" || got.Lines != 80 || got.Output != "$ go test ./...\nok" {
+		t.Fatalf("unexpected output JSON: %#v", got)
+	}
+}
+
+func TestSessionTail_RejectsNonPositiveLines(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "tail", "demo-1", "--lines", "0")
+	if err == nil {
+		t.Fatal("expected --lines 0 to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (err=%v)", got, err)
+	}
+	if got := log.all(); len(got) != 0 {
+		t.Fatalf("requests = %#v, want none", got)
+	}
+}
+
 func TestSessionCommands_MissingIDIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	for _, sub := range []string{"get", "kill", "restore", "exit-agent", "resume-agent"} {
+	for _, sub := range []string{"get", "tail", "kill", "restore", "exit-agent", "resume-agent"} {
 		t.Run(sub, func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, "session", sub)
 			if err == nil {
@@ -871,6 +932,8 @@ func TestSessionClaimPR_Draft(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -916,6 +979,8 @@ func TestSessionClaimPR_GitLabMR(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -945,6 +1010,8 @@ func TestSessionClaimPR_GitLabNumericRef(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -975,6 +1042,8 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 		log.append(r)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":

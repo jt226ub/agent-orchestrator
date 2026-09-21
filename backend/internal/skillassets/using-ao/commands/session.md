@@ -44,6 +44,37 @@ ao session ls --include-terminated -p agent-orchestrator
 
 ---
 
+### ao session tail
+
+Print the last lines of a session's terminal: the same scrollback the desktop terminal shows. Use it to read what a worker printed (its last answer, test output, an error) instead of guessing from its activity state; `idle` only means the worker's turn ended.
+
+**Syntax:**
+```
+ao session tail <id> [flags]
+```
+
+**Flags:**
+
+| Flag | Meaning | Default / Required |
+|---|---|---|
+| `--lines int` | Number of trailing terminal lines to print (at most 2000) | 80 |
+| `--json` | Output as JSON | - |
+| `-p, --project string` | Project id to scope the lookup | - |
+
+**Examples:**
+
+```bash
+# Read the last 80 lines a worker printed
+ao session tail mer-3
+```
+
+```bash
+# Read more of the scrollback
+ao session tail mer-3 --lines 300
+```
+
+---
+
 ### ao session get
 
 Fetch one session.
