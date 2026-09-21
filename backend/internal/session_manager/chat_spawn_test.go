@@ -1423,3 +1423,89 @@ func TestSendRefusedForTerminatedChatSession(t *testing.T) {
 		t.Errorf("a terminated session still received %v", launcher.relayed)
 	}
 }
+
+// A worker an orchestrator spawns defaults to Chat when its harness has a Chat
+// driver, even while the daemon default is TUI: only a Chat worker can be
+// steered mid-turn. The parent is recorded on the worker so lifecycle can route
+// its turn-end notice back.
+func TestSpawn_OrchestratorSpawnedWorkerDefaultsToChat(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeTUI)
+	store.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: chatTestProject, Kind: domain.KindOrchestrator}
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex, ParentSessionID: "mer-0",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Mode != domain.SessionModeChat {
+		t.Fatalf("mode = %q, want chat for an orchestrator-spawned worker", rec.Mode)
+	}
+	if rec.ParentSessionID != "mer-0" {
+		t.Fatalf("parent = %q, want mer-0", rec.ParentSessionID)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("chat spawn created %d terminal runtimes, want 0", runtime.created)
+	}
+}
+
+func TestSpawn_OrchestratorSpawnedWorkerKeepsExplicitTUI(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeTUI)
+	store.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: chatTestProject, Kind: domain.KindOrchestrator}
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		ParentSessionID: "mer-0", RequestedMode: domain.SessionModeTUI,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if rec.Mode != domain.SessionModeTUI {
+		t.Fatalf("mode = %q, want the explicit TUI", rec.Mode)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("TUI spawn created %d terminal runtimes, want 1", runtime.created)
+	}
+}
+
+// The orchestrator-derived default is best-effort like the daemon default: a
+// harness whose Chat driver cannot start falls back to TUI instead of failing
+// the spawn, and a parent that is not a live orchestrator confers nothing.
+func TestSpawn_OrchestratorSpawnedWorkerFallsBackAndIgnoresNonOrchestratorParent(t *testing.T) {
+	launcher := &recordingLauncher{preflightErr: ports.ErrChatDriverUnavailable}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.defaults = fixedSessionModeDefaults(domain.SessionModeTUI)
+	store.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: chatTestProject, Kind: domain.KindOrchestrator}
+	store.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker}
+	store.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: chatTestProject, Kind: domain.KindOrchestrator, IsTerminated: true}
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex, ParentSessionID: "mer-0",
+	})
+	if err != nil {
+		t.Fatalf("Spawn with unavailable Chat driver: %v", err)
+	}
+	if rec.Mode != domain.SessionModeTUI || rec.ParentSessionID != "mer-0" {
+		t.Fatalf("mode = %q parent = %q, want TUI fallback with the parent kept", rec.Mode, rec.ParentSessionID)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("fallback created %d terminal runtimes, want 1", runtime.created)
+	}
+
+	for _, parent := range []domain.SessionID{"mer-1", "mer-2", "other-9"} {
+		launcher.preflightErr = nil
+		rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+			ProjectID: chatTestProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex, ParentSessionID: parent,
+		})
+		if err != nil {
+			t.Fatalf("Spawn with parent %s: %v", parent, err)
+		}
+		if rec.Mode != domain.SessionModeTUI || rec.ParentSessionID != "" {
+			t.Fatalf("parent %s: mode = %q parent = %q, want TUI and no parent", parent, rec.Mode, rec.ParentSessionID)
+		}
+	}
+}

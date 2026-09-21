@@ -509,6 +509,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			Permissions:                      domain.PermissionMode(row.SessionPermissions),
 			Profile:                          row.SessionProfile,
 		},
+		ParentSessionID:   domain.SessionID(row.ParentSessionID),
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
@@ -581,6 +582,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Model:                            rec.Metadata.Model,
 		SessionPermissions:               string(rec.Metadata.Permissions),
 		SessionProfile:                   rec.Metadata.Profile,
+		ParentSessionID:                  string(rec.ParentSessionID),
 		CreatedAt:                        rec.CreatedAt,
 		UpdatedAt:                        rec.UpdatedAt,
 	}

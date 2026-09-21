@@ -140,7 +140,8 @@ func newGetProjectResponse(res projectsvc.GetResult) (GetProjectResponse, error)
 
 // SessionOutputQuery selects how much terminal scrollback to return.
 type SessionOutputQuery struct {
-	Lines *int `query:"lines,omitempty" description:"Number of trailing terminal lines to return (default 80, at most 2000)."`
+	Lines *int  `query:"lines,omitempty" description:"Number of trailing terminal lines to return (default 80, at most 2000)."`
+	Plain *bool `query:"plain,omitempty" description:"Strip escape and control sequences so the text reads as plain lines (default false: the terminal's raw bytes)."`
 }
 
 // SessionOutputResponse is the tail of a session's terminal, the same
@@ -149,7 +150,9 @@ type SessionOutputQuery struct {
 type SessionOutputResponse struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	Lines     int              `json:"lines" minimum:"1"`
-	Output    string           `json:"output"`
+	// Plain reports that escape sequences were stripped from Output.
+	Plain  bool   `json:"plain"`
+	Output string `json:"output"`
 }
 
 // SessionIDParam is the {sessionId} path parameter shared by session routes.

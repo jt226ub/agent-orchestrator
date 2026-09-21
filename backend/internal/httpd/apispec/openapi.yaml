@@ -5323,6 +5323,16 @@ paths:
           type:
           - "null"
           - integer
+      - description: 'Strip escape and control sequences so the text reads as plain
+          lines (default false: the terminal''s raw bytes).'
+        in: query
+        name: plain
+        schema:
+          description: 'Strip escape and control sequences so the text reads as plain
+            lines (default false: the terminal''s raw bytes).'
+          type:
+          - "null"
+          - boolean
       responses:
         "200":
           content:
@@ -9685,6 +9695,8 @@ components:
           type: string
         model:
           type: string
+        parentSessionId:
+          type: string
         pinnedAt:
           format: date-time
           type:
@@ -12482,11 +12494,14 @@ components:
           type: integer
         output:
           type: string
+        plain:
+          type: boolean
         sessionId:
           type: string
       required:
       - sessionId
       - lines
+      - plain
       - output
       type: object
     SessionPRCISummary:

@@ -44,7 +44,10 @@ mode (request > profile > parent conversation > project default); #12 `ao sessio
 leaves a worktree that a live session still uses; #13 `ao session tail` reads a session's
 terminal scrollback; #14 the pty-host queues keystrokes so a multi-line `ao send` to a TUI
 session is delivered whole (before it, everything after the first kilobyte could be lost
-while the agent was still consuming the paste). The design and decisions live in the LLM Drive
+while the agent was still consuming the paste); #16 worker turn signals: a daemon-authored
+`[AO] Worker <id> ... finished its turn` message to the owning orchestrator (queued while it is
+busy), `ao session wait`, `no_signal` in `ao session ls`, orchestrator-spawned workers default
+to chat mode when the agent has a Chat driver, and plain-text `ao session tail`. The design and decisions live in the LLM Drive
 Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D31).
 
 **Installed versus merged.** The installed build (2026-09-21 evening) carries PRs #1–#14, the

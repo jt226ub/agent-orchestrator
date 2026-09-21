@@ -19,6 +19,7 @@ ao spawn [flags]
 | `--issue string` | Issue id to associate with the session | - |
 | `--profile string` | Role profile from the project's `profiles` map: its harness, agent config, environment and rules file apply to this session; `--agent` and `--model` still override it | Project `worker.profile` / `orchestrator.profile` when set |
 | `--name string` | Display name shown in the sidebar (max 20 characters) | Required |
+| `--mode string` | Session interface: `chat` or `tui`. A worker spawned from an orchestrator session defaults to `chat` when its agent has a Chat driver (only a chat session can be steered mid-turn); otherwise the daemon default applies | Daemon default (`tui`) |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
 | `--project string` | Project id to spawn the session in | Optional when `--standalone` is used; defaults to `AO_PROJECT_ID` or the current repo's registered project |
 | `--standalone` | Spawn a projectless worker session in an AO-managed directory | Disabled when `--project` is set |

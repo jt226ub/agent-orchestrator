@@ -84,7 +84,7 @@ type SessionService interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
 	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
-	Output(ctx context.Context, id domain.SessionID, lines int) (sessionsvc.OutputResult, error)
+	Output(ctx context.Context, id domain.SessionID, lines int, plain bool) (sessionsvc.OutputResult, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	ExitAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ExitAgentOutcome, error)
 	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
@@ -425,12 +425,21 @@ func (c *SessionsController) output(w http.ResponseWriter, r *http.Request) {
 		}
 		lines = parsed
 	}
-	result, err := c.Svc.Output(r.Context(), sessionID(r), lines)
+	plain := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("plain")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "OUTPUT_PLAIN_INVALID", "plain must be true or false", nil)
+			return
+		}
+		plain = parsed
+	}
+	result, err := c.Svc.Output(r.Context(), sessionID(r), lines, plain)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionOutputResponse{SessionID: result.SessionID, Lines: result.Lines, Output: result.Output})
+	envelope.WriteJSON(w, http.StatusOK, SessionOutputResponse{SessionID: result.SessionID, Lines: result.Lines, Plain: result.Plain, Output: result.Output})
 }
 
 func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {

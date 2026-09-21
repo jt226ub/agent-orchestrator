@@ -195,6 +195,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionListCommand(ctx))
 	cmd.AddCommand(newSessionGetCommand(ctx))
 	cmd.AddCommand(newSessionTailCommand(ctx))
+	cmd.AddCommand(newSessionWaitCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionExitAgentCommand(ctx))
@@ -249,6 +250,7 @@ func newSessionGetCommand(ctx *commandContext) *cobra.Command {
 func newSessionTailCommand(ctx *commandContext) *cobra.Command {
 	var opts sessionOptions
 	var lines int
+	var raw bool
 	cmd := &cobra.Command{
 		Use:   "tail <id>",
 		Short: "Print the last lines of a session's terminal",
@@ -259,12 +261,13 @@ func newSessionTailCommand(ctx *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return ctx.tailSession(cmd.Context(), cmd, id, lines, opts)
+			return ctx.tailSession(cmd.Context(), cmd, id, lines, raw, opts)
 		},
 	}
 	f := cmd.Flags()
 	addSessionProjectFlag(f, &opts.project, "Project id to scope the lookup")
 	f.IntVar(&lines, "lines", 80, "Number of trailing terminal lines to print (at most 2000)")
+	f.BoolVar(&raw, "raw", false, "Keep the terminal's escape sequences instead of printing plain text")
 	f.BoolVar(&opts.json, "json", false, "Output as JSON")
 	return cmd
 }
@@ -631,10 +634,11 @@ func (c *commandContext) getSession(ctx context.Context, cmd *cobra.Command, id 
 type sessionOutputResponse struct {
 	SessionID string `json:"sessionId"`
 	Lines     int    `json:"lines"`
+	Plain     bool   `json:"plain"`
 	Output    string `json:"output"`
 }
 
-func (c *commandContext) tailSession(ctx context.Context, cmd *cobra.Command, id string, lines int, opts sessionOptions) error {
+func (c *commandContext) tailSession(ctx context.Context, cmd *cobra.Command, id string, lines int, raw bool, opts sessionOptions) error {
 	if opts.project != "" {
 		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
 			return err
@@ -644,7 +648,11 @@ func (c *commandContext) tailSession(ctx context.Context, cmd *cobra.Command, id
 		return usageError{fmt.Errorf("--lines must be a positive integer")}
 	}
 	var res sessionOutputResponse
-	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id)+"/output?lines="+strconv.Itoa(lines), &res); err != nil {
+	query := "?lines=" + strconv.Itoa(lines)
+	if !raw {
+		query += "&plain=true"
+	}
+	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id)+"/output"+query, &res); err != nil {
 		return err
 	}
 	if opts.json {
@@ -983,7 +991,7 @@ func writeSessionList(cmd *cobra.Command, sessions []sessionDTO, summaries map[s
 				}
 			}
 			pr, ci, review, threads := sessionPRColumns(sess, summaries[sess.ID])
-			if _, err := fmt.Fprintf(table, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sess.ID, emptyDash(sess.Branch), pr, ci, review, threads, emptyDash(sess.Activity.State), sessionAge(now, sess.Activity.LastActivityAt)); err != nil {
+			if _, err := fmt.Fprintf(table, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sess.ID, emptyDash(sess.Branch), pr, ci, review, threads, activityCell(sess), sessionAge(now, sess.Activity.LastActivityAt)); err != nil {
 				return err
 			}
 		}
@@ -1035,6 +1043,17 @@ func emptyDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+// activityCell renders the ACTIVITY column. A worker reads idle both when its
+// turn ended and when its agent never reported at all; the daemon already
+// tells the two apart through the derived status, so a session whose agent
+// has not signalled shows no_signal instead of a confident idle.
+func activityCell(sess sessionDTO) string {
+	if sess.Activity.State == "idle" && sess.Status == "no_signal" {
+		return "no_signal"
+	}
+	return emptyDash(sess.Activity.State)
 }
 
 func sessionAge(now, at time.Time) string {
