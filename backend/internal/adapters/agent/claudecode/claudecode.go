@@ -52,6 +52,8 @@ type Plugin struct {
 	agentbase.Base
 	binaryMu       sync.Mutex
 	resolvedBinary string
+	usageMu        sync.Mutex
+	usage          *claudeCodeUsageReader
 }
 
 // New returns a ready-to-register Claude Code adapter.

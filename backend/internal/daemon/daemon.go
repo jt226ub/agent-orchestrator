@@ -782,6 +782,7 @@ func Run() error {
 		CodexAccounts:      agentSvc,
 		AgyAccounts:        agentSvc,
 		AgyCapacity:        agentSvc,
+		ClaudeCodeUsage:    agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
 		Sessions:           sessionSvc,

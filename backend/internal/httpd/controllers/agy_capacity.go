@@ -1,3 +1,4 @@
+//nolint:dupl // Antigravity and Claude Code keep separate usage contracts by design (FORK.md).
 package controllers
 
 import (
