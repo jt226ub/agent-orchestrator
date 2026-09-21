@@ -74,3 +74,19 @@ func TestWithDefaultProfilesProjectEntriesWin(t *testing.T) {
 		t.Fatal("origin record leaked into JSON")
 	}
 }
+
+func TestStripDefaultProfilesKeepsOnlyTheProjectsOwn(t *testing.T) {
+	cfg := ProjectConfig{Profiles: map[string]RoleProfile{"mine": {Harness: HarnessCodex}}}
+	merged := cfg.WithDefaultProfiles(map[string]RoleProfile{"flash-coder": {Harness: HarnessAgy}, "mine": {Harness: HarnessAgy}})
+	stripped := merged.StripDefaultProfiles()
+	if len(stripped.Profiles) != 1 || stripped.Profiles["mine"].Harness != HarnessCodex || stripped.IsDefaultProfile("flash-coder") {
+		t.Fatalf("stripped = %+v", stripped.Profiles)
+	}
+	empty := ProjectConfig{}.WithDefaultProfiles(map[string]RoleProfile{"flash-coder": {}}).StripDefaultProfiles()
+	if empty.Profiles != nil {
+		t.Fatalf("a config with no own profiles kept %+v", empty.Profiles)
+	}
+	if untouched := cfg.StripDefaultProfiles(); len(untouched.Profiles) != 1 {
+		t.Fatal("stripping a config without defaults changed it")
+	}
+}

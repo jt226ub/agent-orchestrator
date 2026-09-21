@@ -73,3 +73,24 @@ func (c ProjectConfig) IsDefaultProfile(name string) bool {
 	_, ok := c.defaultProfiles[strings.TrimSpace(name)]
 	return ok
 }
+
+// StripDefaultProfiles removes the entries WithDefaultProfiles added, so a
+// config that was merged for validation or template binding can be stored
+// with only the project's own profiles.
+func (c ProjectConfig) StripDefaultProfiles() ProjectConfig {
+	if len(c.defaultProfiles) == 0 {
+		return c
+	}
+	profiles := make(map[string]RoleProfile, len(c.Profiles))
+	for name, profile := range c.Profiles {
+		if _, added := c.defaultProfiles[name]; !added {
+			profiles[name] = profile
+		}
+	}
+	if len(profiles) == 0 {
+		profiles = nil
+	}
+	c.Profiles = profiles
+	c.defaultProfiles = nil
+	return c
+}
