@@ -26,6 +26,7 @@ type APIDeps struct {
 	CodexAccounts      controllers.CodexAccountService
 	AgyAccounts        controllers.AgyAccountService
 	AgyCapacity        controllers.AgyCapacityService
+	ClaudeCodeUsage    controllers.ClaudeCodeUsageService
 	Projects           projectsvc.Manager
 	Sessions           controllers.SessionService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
@@ -111,6 +112,7 @@ type API struct {
 	codexAccounts   *controllers.CodexAccountsController
 	agyAccounts     *controllers.AgyAccountsController
 	agyCapacity     *controllers.AgyCapacityController
+	claudeCodeUsage *controllers.ClaudeCodeUsageController
 	projects        *controllers.ProjectsController
 	sessions        *controllers.SessionsController
 	desktop         *controllers.DesktopWorkspaceController
@@ -144,9 +146,10 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		agents: &controllers.AgentsController{
 			Catalog: deps.Agents,
 		},
-		codexAccounts: &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
-		agyAccounts:   &controllers.AgyAccountsController{Svc: deps.AgyAccounts},
-		agyCapacity:   &controllers.AgyCapacityController{Svc: deps.AgyCapacity},
+		codexAccounts:   &controllers.CodexAccountsController{Svc: deps.CodexAccounts},
+		agyAccounts:     &controllers.AgyAccountsController{Svc: deps.AgyAccounts},
+		agyCapacity:     &controllers.AgyCapacityController{Svc: deps.AgyCapacity},
+		claudeCodeUsage: &controllers.ClaudeCodeUsageController{Svc: deps.ClaudeCodeUsage},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
@@ -198,6 +201,7 @@ func (a *API) Register(root chi.Router) {
 			a.codexAccounts.Register(r)
 			a.agyAccounts.Register(r)
 			a.agyCapacity.Register(r)
+			a.claudeCodeUsage.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.desktop.Register(r)

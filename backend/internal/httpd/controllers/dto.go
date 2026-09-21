@@ -1353,6 +1353,52 @@ type EnsureAgyCapacityRequest struct {
 	Force bool `json:"force,omitempty"`
 }
 
+// ClaudeCodeUsageResponse is the device's signed-in Claude Code subscription
+// and its limits, as the CLI's own /usage screen reports them. Credential
+// material never appears here.
+type ClaudeCodeUsageResponse struct {
+	State            string                            `json:"state" enum:"available,unknown,unsupported"`
+	Freshness        string                            `json:"freshness" enum:"fresh,stale,checking"`
+	Plan             *string                           `json:"plan,omitempty"`
+	Identity         *ClaudeCodeUsageIdentityResponse  `json:"identity,omitempty"`
+	Promotion        *ClaudeCodeUsagePromotionResponse `json:"promotion,omitempty"`
+	RemainingPercent *float64                          `json:"remainingPercent,omitempty" minimum:"0" maximum:"100"`
+	Windows          []ClaudeCodeUsageWindowResponse   `json:"windows"`
+	ObservedAt       *time.Time                        `json:"observedAt,omitempty"`
+	CheckedAt        *time.Time                        `json:"checkedAt,omitempty"`
+	AttemptedAt      *time.Time                        `json:"attemptedAt,omitempty"`
+	ReasonCode       string                            `json:"reasonCode"`
+	Reason           string                            `json:"reason"`
+}
+
+// ClaudeCodeUsageIdentityResponse is the allowlisted non-secret identity of
+// the signed-in Claude Code account.
+type ClaudeCodeUsageIdentityResponse struct {
+	EmailAddress     string `json:"emailAddress,omitempty"`
+	DisplayName      string `json:"displayName,omitempty"`
+	OrganizationName string `json:"organizationName,omitempty"`
+}
+
+// ClaudeCodeUsagePromotionResponse is an active weekly-limit promotion.
+type ClaudeCodeUsagePromotionResponse struct {
+	PercentIncrease int    `json:"percentIncrease" minimum:"1"`
+	EndsOn          string `json:"endsOn"`
+}
+
+// ClaudeCodeUsageWindowResponse is one provider-reported subscription limit.
+type ClaudeCodeUsageWindowResponse struct {
+	ID          string     `json:"id"`
+	DisplayName string     `json:"displayName"`
+	UsedPercent float64    `json:"usedPercent" minimum:"0" maximum:"100"`
+	ResetsAt    *time.Time `json:"resetsAt,omitempty"`
+}
+
+// EnsureClaudeCodeUsageRequest asks for a display-fresh Claude Code usage
+// snapshot; force reads the provider even when the cache is fresh.
+type EnsureClaudeCodeUsageRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
 // CodexResetCreditsSummaryResponse contains no provider reset-credit identity.
 type CodexResetCreditsSummaryResponse struct {
 	AvailableCount   int64      `json:"availableCount" minimum:"0"`

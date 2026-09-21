@@ -362,6 +362,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/claude-code/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the cached Claude Code plan usage snapshot */
+        get: operations["getClaudeCodeUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/claude-code/usage/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read the signed-in Claude Code subscription's limits when the cached snapshot is stale */
+        post: operations["ensureClaudeCodeUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/codex/account-switches": {
         parameters: {
             query?: never;
@@ -3093,6 +3127,42 @@ export interface components {
             sessionId: string;
             takenOverFrom: string[];
         };
+        ClaudeCodeUsageIdentityResponse: {
+            displayName?: string;
+            emailAddress?: string;
+            organizationName?: string;
+        };
+        ClaudeCodeUsagePromotionResponse: {
+            endsOn: string;
+            percentIncrease: number;
+        };
+        ClaudeCodeUsageResponse: {
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            checkedAt?: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            identity?: components["schemas"]["ClaudeCodeUsageIdentityResponse"];
+            /** Format: date-time */
+            observedAt?: null | string;
+            plan?: null | string;
+            promotion?: components["schemas"]["ClaudeCodeUsagePromotionResponse"];
+            reason: string;
+            reasonCode: string;
+            remainingPercent?: null | number;
+            /** @enum {string} */
+            state: "available" | "unknown" | "unsupported";
+            windows: components["schemas"]["ClaudeCodeUsageWindowResponse"][];
+        };
+        ClaudeCodeUsageWindowResponse: {
+            displayName: string;
+            id: string;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** Format: double */
+            usedPercent: number;
+        };
         CleanupSessionsResponse: {
             alreadyGone: string[];
             cleaned: string[];
@@ -3739,6 +3809,9 @@ export interface components {
             forceDeviceReconciliation?: boolean;
         };
         EnsureAgyCapacityRequest: {
+            force?: boolean;
+        };
+        EnsureClaudeCodeUsageRequest: {
             force?: boolean;
         };
         EnsureCodexAccountsRequest: {
@@ -6106,6 +6179,77 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getClaudeCodeUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeUsageResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    ensureClaudeCodeUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsureClaudeCodeUsageRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeUsageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

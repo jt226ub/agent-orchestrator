@@ -822,6 +822,57 @@ paths:
       summary: Return display-safe native authentication plans for supported agents
       tags:
       - agents
+  /api/v1/agents/claude-code/usage:
+    get:
+      operationId: getClaudeCodeUsage
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeUsageResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached Claude Code plan usage snapshot
+      tags:
+      - agents
+  /api/v1/agents/claude-code/usage/ensure:
+    post:
+      operationId: ensureClaudeCodeUsage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureClaudeCodeUsageRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeCodeUsageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the signed-in Claude Code subscription's limits when the cached
+        snapshot is stale
+      tags:
+      - agents
   /api/v1/agents/codex/account-switches:
     post:
       operationId: startCodexAccountSwitch
@@ -8749,6 +8800,105 @@ components:
       - branchChanged
       - takenOverFrom
       type: object
+    ClaudeCodeUsageIdentityResponse:
+      properties:
+        displayName:
+          type: string
+        emailAddress:
+          type: string
+        organizationName:
+          type: string
+      type: object
+    ClaudeCodeUsagePromotionResponse:
+      properties:
+        endsOn:
+          type: string
+        percentIncrease:
+          minimum: 1
+          type: integer
+      required:
+      - percentIncrease
+      - endsOn
+      type: object
+    ClaudeCodeUsageResponse:
+      properties:
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        identity:
+          $ref: '#/components/schemas/ClaudeCodeUsageIdentityResponse'
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        plan:
+          type:
+          - "null"
+          - string
+        promotion:
+          $ref: '#/components/schemas/ClaudeCodeUsagePromotionResponse'
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        remainingPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+        state:
+          enum:
+          - available
+          - unknown
+          - unsupported
+          type: string
+        windows:
+          items:
+            $ref: '#/components/schemas/ClaudeCodeUsageWindowResponse'
+          type: array
+      required:
+      - state
+      - freshness
+      - windows
+      - reasonCode
+      - reason
+      type: object
+    ClaudeCodeUsageWindowResponse:
+      properties:
+        displayName:
+          type: string
+        id:
+          type: string
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+      required:
+      - id
+      - displayName
+      - usedPercent
+      type: object
     CleanupSessionsResponse:
       properties:
         alreadyGone:
@@ -10559,6 +10709,11 @@ components:
           type: boolean
       type: object
     EnsureAgyCapacityRequest:
+      properties:
+        force:
+          type: boolean
+      type: object
+    EnsureClaudeCodeUsageRequest:
       properties:
         force:
           type: boolean
