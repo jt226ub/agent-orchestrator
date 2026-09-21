@@ -60,12 +60,19 @@ standing rules are layered contract → role file → project rules → profile 
 plan. `deepseek-expert` needs `ANTHROPIC_AUTH_TOKEN` added to its environment before it can
 run; the key is deliberately not stored by the tooling.
 
-**To rebuild after a change:**
+**To rebuild after a change.** Two quirks of this machine first: with Node 26 the
+packager's `extract-zip` exits silently mid-extraction (no bundle, exit 0), so the
+Electron packaging step runs under the Node 22 that `build:acp-runtime` downloads; and the
+tmux source build cannot run from a path with a space (`Coding Projects`), so the tmux
+cache under `.cache/bundled-tmux/` was seeded once with the stock app's identical
+tmux 3.5a and is reused by every later build (delete it only if the pinned versions in
+`scripts/build-tmux.mjs` change).
 
 ```bash
 cd "/Volumes/External Data/Coding Projects/agent-orchestrator"
 git checkout fork/main && git pull --ff-only
-cd frontend && npm run package
+cd frontend && npm run prepackage
+PATH="$PWD/resources/acp-runtime/node/bin:$PATH" npx electron-forge package
 osascript -e 'quit app "Agent Orchestrator"'
 rm -rf "/Applications/Agent Orchestrator.app"
 cp -R "out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app" /Applications/
