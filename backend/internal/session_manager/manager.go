@@ -3983,6 +3983,16 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		AlreadyGone: []domain.SessionID{},
 		Skipped:     []CleanupSkip{},
 	}
+	// Orchestrator sessions of one project share a workspace path (the
+	// per-project orchestrator worktree), so a terminated orchestrator may
+	// record the very directory a live one is running in. Reclaiming it would
+	// pull the ground out from under the live session.
+	inUse := make(map[string]struct{}, len(recs))
+	for _, rec := range recs {
+		if path := rec.Metadata.WorkspacePath; !rec.IsTerminated && path != "" {
+			inUse[path] = struct{}{}
+		}
+	}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
@@ -3991,6 +4001,10 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if ws.Path == "" {
 			m.cleanupAgentWorkspace(ctx, rec, "")
 			m.cleanupSystemPromptDir(rec.ID)
+			continue
+		}
+		if _, live := inUse[ws.Path]; live {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace in use by a live session"})
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
