@@ -3688,6 +3688,34 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 }
 
+// TestCleanup_LeavesWorkspaceSharedWithLiveSession covers the per-project
+// orchestrator worktree: a terminated orchestrator records the same path a
+// live one runs in, and cleanup must not reclaim it.
+func TestCleanup_LeavesWorkspaceSharedWithLiveSession(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer/orchestrator"})
+	live := mkLive("mer-2")
+	live.Metadata.WorkspacePath = "/ws/mer/orchestrator"
+	st.sessions["mer-2"] = live
+	seedTerminal(st, "mer-3", domain.SessionMetadata{WorkspacePath: "/ws/mer-3"})
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" || res.Skipped[0].Reason != "workspace in use by a live session" {
+		t.Fatalf("skipped = %v, want mer-1 skipped for the live workspace", res.Skipped)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-3" {
+		t.Fatalf("cleaned = %v, want only mer-3", res.Cleaned)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("destroyed = %d, want only the unshared workspace", ws.destroyed)
+	}
+	if _, ok := st.sessions["mer-2"]; !ok {
+		t.Fatal("live session must remain")
+	}
+}
+
 // TestCleanup_SeparatesAlreadyGoneWorkspacesFromReclaimedOnes keeps the
 // reported count evidence rather than bookkeeping. A workspace whose directory
 // was already missing tears down without error, so counting it as Cleaned
