@@ -151,6 +151,7 @@ var shippedMigrations = map[int64]string{
 	146: "0146_codex_account_management_simplification.sql",
 	147: "0147_native_history_provenance.sql",
 	148: "0148_notification_dismissal.sql",
+	149: "0149_reviewer_chat_conversations.sql",
 	151: "0151_session_profile.sql",
 	152: "0152_agy_account_management.sql",
 	153: "0153_session_parent.sql",
