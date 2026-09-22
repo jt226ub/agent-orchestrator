@@ -65,6 +65,9 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
 		lifecycle.WithUrgentNudgeGate(urgentNudgeWaitingInputSafe(agents)),
 	)
+	// Queued worker turn-end notices are retried on a timer as well as on the
+	// orchestrator's next idle (see lifecycle.RunTurnEndRetries).
+	go lcm.RunTurnEndRetries(ctx, lifecycle.TurnEndRetryInterval)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
 	return &lifecycleStack{
