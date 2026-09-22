@@ -104,7 +104,9 @@ type outputCommander interface {
 type OutputResult struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	Lines     int              `json:"lines"`
-	Output    string           `json:"output"`
+	// Plain reports that escape sequences were stripped from Output.
+	Plain  bool   `json:"plain"`
+	Output string `json:"output"`
 }
 
 // RollbackOutcome reports what happened in a rollback: either the seed row was
@@ -620,7 +622,7 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 // Output returns the last lines of a session's terminal so a caller (an
 // orchestrator, typically) can read what a worker printed. A session without
 // a live terminal is a conflict, not an empty page.
-func (s *Service) Output(ctx context.Context, id domain.SessionID, lines int) (OutputResult, error) {
+func (s *Service) Output(ctx context.Context, id domain.SessionID, lines int, plain bool) (OutputResult, error) {
 	manager, ok := s.manager.(outputCommander)
 	if !ok {
 		return OutputResult{}, apierr.Conflict("SESSION_OUTPUT_UNSUPPORTED", "This build cannot read session output", nil)
@@ -641,7 +643,10 @@ func (s *Service) Output(ctx context.Context, id domain.SessionID, lines int) (O
 	if lines > sessionmanager.MaxOutputLines {
 		lines = sessionmanager.MaxOutputLines
 	}
-	return OutputResult{SessionID: id, Lines: lines, Output: output}, nil
+	if plain {
+		output = sessionmanager.PlainTerminalText(output)
+	}
+	return OutputResult{SessionID: id, Lines: lines, Plain: plain, Output: output}, nil
 }
 
 // ExitAgent stops only the agent controller while preserving the AO session,

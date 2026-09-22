@@ -243,6 +243,7 @@ type Manager struct {
 	window    time.Duration
 	clock     func() time.Time
 	react     reactionState
+	turnEnds  turnEndState
 	telemetry ports.EventSink
 	// flights tracks, per session, the in-flight tool executions and the
 	// pending permission dialog's identity (see toolFlight). Guarded by mu.
@@ -1000,6 +1001,7 @@ retryProjection:
 	}
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
+	m.applyTurnEndSignals(ctx, prevState, next, now)
 	return nil
 }
 

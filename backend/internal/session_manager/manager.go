@@ -874,6 +874,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if projectKind == domain.ProjectKindScratch && strings.TrimSpace(cfg.Branch) != "" {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", ErrScratchBranchUnsupported)
 	}
+	// AO_SESSION_ID is exported into every session, so the parent a CLI spawn
+	// names may be a worker, a stale id, or another project's session. Only a
+	// live same-project orchestrator counts; anything else reads as "no parent"
+	// everywhere below: no inherited permissions, no orchestrator-derived mode,
+	// and no durable parentage for turn-end notices.
+	parent, err := m.spawnParentOrchestrator(ctx, cfg.ProjectID, cfg.ParentSessionID)
+	if err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	}
+	cfg.ParentSessionID = parent
 	if cfg.ParentSessionID != "" && cfg.AgentConfig.Permissions == "" && profilePermissions == "" {
 		permissions, err := m.inheritedSpawnPermissions(ctx, cfg.ProjectID, cfg.ParentSessionID)
 		if err != nil {
@@ -918,7 +928,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// a worktree behind. Chat inherited from the daemon preference is best-effort:
 	// if it is unavailable for this harness or installation, fall back to TUI.
 	modeExplicitlyRequested := cfg.RequestedMode.Valid()
-	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
+	requestedMode := cfg.RequestedMode
+	if !modeExplicitlyRequested && cfg.Kind == domain.KindWorker && cfg.ParentSessionID != "" &&
+		m.chat != nil && m.chat.SupportsChat(cfg.Harness) {
+		// A worker an orchestrator spawns defaults to Chat when its harness has
+		// a Chat driver: only a Chat session can be steered mid-turn and takes a
+		// queued message while busy, which is how an orchestrator redirects its
+		// workers. Like the daemon default, this is best-effort (it falls back
+		// to TUI below when Chat cannot start), and an explicit --mode still
+		// wins. Harnesses without a Chat driver keep the ordinary precedence.
+		requestedMode = domain.SessionModeChat
+	}
+	mode := m.resolveSessionMode(ctx, requestedMode)
 	if mode == domain.SessionModeChat {
 		if m.chat == nil {
 			if modeExplicitlyRequested {
@@ -1238,6 +1259,23 @@ func containsString(values []string, value string) bool {
 // inheritedSpawnPermissions derives a worker override from its requesting chat
 // orchestrator. The request supplies identity only: the stored conversation
 // settings remain the authority for the permission policy.
+// spawnParentOrchestrator validates the parent a spawn names and returns it
+// only when it is a live orchestrator of the same project; every other value
+// (empty, unknown, terminated, a worker, another project's session) yields "".
+func (m *Manager) spawnParentOrchestrator(ctx context.Context, projectID domain.ProjectID, parentID domain.SessionID) (domain.SessionID, error) {
+	if parentID == "" {
+		return "", nil
+	}
+	parent, ok, err := m.store.GetSession(ctx, parentID)
+	if err != nil {
+		return "", fmt.Errorf("load parent session %s: %w", parentID, err)
+	}
+	if !ok || parent.ProjectID != projectID || parent.Kind != domain.KindOrchestrator || parent.IsTerminated {
+		return "", nil
+	}
+	return parent.ID, nil
+}
+
 func (m *Manager) inheritedSpawnPermissions(ctx context.Context, projectID domain.ProjectID, parentID domain.SessionID) (domain.PermissionMode, error) {
 	parent, ok, err := m.store.GetSession(ctx, parentID)
 	if err != nil {
@@ -4118,7 +4156,10 @@ func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now t
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
-		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		// Validated by Spawn before this point; empty unless a live same-project
+		// orchestrator requested the worker.
+		ParentSessionID: cfg.ParentSessionID,
+		Activity:        domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),

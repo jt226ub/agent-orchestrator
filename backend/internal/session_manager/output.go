@@ -50,3 +50,12 @@ func (m *Manager) Output(ctx context.Context, id domain.SessionID, lines int) (s
 	}
 	return output, nil
 }
+
+// PlainTerminalText reduces raw terminal output to readable text: escape and
+// control sequences are removed, carriage returns become line breaks, and
+// invalid UTF-8 is replaced. A full-screen agent repaints its viewport into
+// the scrollback, so repeated lines can remain; the words are what a reader
+// wants, not the cursor choreography.
+func PlainTerminalText(raw string) string {
+	return normalizeHistoricalContext([]byte(raw))
+}

@@ -25,6 +25,7 @@ var routineInternalCLICommands = []string{
 	"ao session ls",
 	"ao session get",
 	"ao session tail",
+	"ao session wait",
 	"ao session agent-switch ls",
 	"ao session handoff",
 	"ao project ls",

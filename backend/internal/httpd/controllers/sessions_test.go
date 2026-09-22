@@ -245,14 +245,18 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 	return s, err
 }
 
-func (f *fakeSessionService) Output(_ context.Context, id domain.SessionID, lines int) (sessionsvc.OutputResult, error) {
+func (f *fakeSessionService) Output(_ context.Context, id domain.SessionID, lines int, plain bool) (sessionsvc.OutputResult, error) {
 	if _, ok := f.sessions[id]; !ok {
 		return sessionsvc.OutputResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	if lines <= 0 {
 		lines = 80
 	}
-	return sessionsvc.OutputResult{SessionID: id, Lines: lines, Output: f.output}, nil
+	output := f.output
+	if plain {
+		output = strings.ReplaceAll(output, "\x1b[1m", "")
+	}
+	return sessionsvc.OutputResult{SessionID: id, Lines: lines, Plain: plain, Output: output}, nil
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -1434,6 +1438,20 @@ func TestSessionsAPI_OutputReturnsTerminalTail(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/missing/output", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("unknown session status = %d, want 404; body=%s", status, body)
+	}
+
+	svc.output = "\x1b[1mok\x1b[1m"
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/output?plain=true", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET plain output = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &res)
+	if !res.Plain || res.Output != "ok" {
+		t.Fatalf("plain output = %#v, want stripped text", res)
+	}
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/output?plain=maybe", "")
+	if status != http.StatusBadRequest {
+		t.Fatalf("plain=maybe status = %d, want 400; body=%s", status, body)
 	}
 }
 

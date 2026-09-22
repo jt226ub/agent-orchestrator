@@ -3440,6 +3440,7 @@ export interface components {
             /** @enum {string} */
             mode: "chat" | "tui";
             model?: string;
+            parentSessionId?: string;
             /** Format: date-time */
             pinnedAt?: null | string;
             /** Format: int64 */
@@ -4487,6 +4488,7 @@ export interface components {
         SessionOutputResponse: {
             lines: number;
             output: string;
+            plain: boolean;
             sessionId: string;
         };
         SessionPRCISummary: {
@@ -11959,6 +11961,8 @@ export interface operations {
             query?: {
                 /** @description Number of trailing terminal lines to return (default 80, at most 2000). */
                 lines?: null | number;
+                /** @description Strip escape and control sequences so the text reads as plain lines (default false: the terminal's raw bytes). */
+                plain?: null | boolean;
             };
             header?: never;
             path: {

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -68,7 +70,7 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 					sessionJSON("demo-1", "demo", "worker", "working", false)+`]}`)
 			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
-			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"plain":`+strconv.FormatBool(r.URL.Query().Get("plain") == "true")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -722,7 +724,7 @@ func TestSessionTail_PrintsTerminalOutput(t *testing.T) {
 	if out != "$ go test ./...\nok\n" {
 		t.Fatalf("unexpected tail output: %q", out)
 	}
-	want := []string{"GET /api/v1/sessions/demo-1/output?lines=40"}
+	want := []string{"GET /api/v1/sessions/demo-1/output?lines=40&plain=true"}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
 	}
@@ -769,7 +771,7 @@ func TestSessionTail_RejectsNonPositiveLines(t *testing.T) {
 
 func TestSessionCommands_MissingIDIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	for _, sub := range []string{"get", "tail", "kill", "restore", "exit-agent", "resume-agent"} {
+	for _, sub := range []string{"get", "tail", "wait", "kill", "restore", "exit-agent", "resume-agent"} {
 		t.Run(sub, func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, "session", sub)
 			if err == nil {
@@ -933,7 +935,7 @@ func TestSessionClaimPR_Draft(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
-			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"plain":`+strconv.FormatBool(r.URL.Query().Get("plain") == "true")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -980,7 +982,7 @@ func TestSessionClaimPR_GitLabMR(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
-			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"plain":`+strconv.FormatBool(r.URL.Query().Get("plain") == "true")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -1011,7 +1013,7 @@ func TestSessionClaimPR_GitLabNumericRef(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
-			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"plain":`+strconv.FormatBool(r.URL.Query().Get("plain") == "true")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -1043,7 +1045,7 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/output":
-			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"output":"$ go test ./...\nok"}`)
+			_, _ = io.WriteString(w, `{"sessionId":"demo-1","lines":`+r.URL.Query().Get("lines")+`,"plain":`+strconv.FormatBool(r.URL.Query().Get("plain") == "true")+`,"output":"$ go test ./...\nok"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -1074,5 +1076,130 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 	}
 	if ghDir != "/repo/demo" || !strings.Contains(out, "claimed PR #142") {
 		t.Fatalf("ghDir=%q out=%s", ghDir, out)
+	}
+}
+
+// waitServer serves a session whose activity follows the given sequence, one
+// state per GET, repeating the last state once the sequence is exhausted.
+func waitServer(t *testing.T, states []string, terminatedAt int, lastActivityAgo time.Duration) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/sessions/demo-1" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		i := calls
+		if i >= len(states) {
+			i = len(states) - 1
+		}
+		calls++
+		b, _ := json.Marshal(map[string]any{
+			"id": "demo-1", "projectId": "demo", "kind": "worker", "harness": "codex",
+			"activity":     map[string]any{"state": states[i], "lastActivityAt": time.Now().Add(-lastActivityAgo).UTC().Format(time.RFC3339Nano)},
+			"isTerminated": terminatedAt > 0 && calls >= terminatedAt,
+			"createdAt":    "2026-06-02T11:00:00Z", "updatedAt": "2026-06-02T12:00:00Z", "status": "working",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"session":` + string(b) + `}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func TestSessionWait_ReturnsWhenTheWatchedTurnEnds(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, calls := waitServer(t, []string{"idle", "active", "active", "idle"}, 0, 0)
+	writeRunFileFor(t, cfg, srv)
+
+	sleeps := 0
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+		Sleep:        func(time.Duration) { sleeps++ },
+	}, "session", "wait", "demo-1")
+	if err != nil {
+		t.Fatalf("session wait failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.HasPrefix(out, "demo-1 idle (waited ") {
+		t.Fatalf("unexpected wait output: %q", out)
+	}
+	if *calls != 4 || sleeps != 3 {
+		t.Fatalf("calls = %d sleeps = %d, want the fourth read to end the wait after three polls", *calls, sleeps)
+	}
+}
+
+func TestSessionWait_ReturnsAtOnceForALongIdleSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, calls := waitServer(t, []string{"idle"}, 0, time.Minute)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+		Sleep:        func(time.Duration) { t.Fatal("wait slept although the session had long been idle") },
+	}, "session", "wait", "demo-1", "--json")
+	if err != nil {
+		t.Fatalf("session wait failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionWaitResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("wait --json output is not decodable: %v\noutput=%s", err, out)
+	}
+	if got.SessionID != "demo-1" || got.Outcome != "idle" || *calls != 1 {
+		t.Fatalf("unexpected wait result %#v after %d calls", got, *calls)
+	}
+}
+
+func TestSessionWait_ReportsNeedsInputTerminationAndTimeout(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := waitServer(t, []string{"active", "blocked"}, 0, 0)
+	writeRunFileFor(t, cfg, srv)
+	out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }, Sleep: func(time.Duration) {}}, "session", "wait", "demo-1")
+	if err != nil || !strings.HasPrefix(out, "demo-1 blocked") {
+		t.Fatalf("blocked wait: err=%v out=%q", err, out)
+	}
+
+	srv, _ = waitServer(t, []string{"active", "active"}, 2, 0)
+	writeRunFileFor(t, cfg, srv)
+	out, _, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }, Sleep: func(time.Duration) {}}, "session", "wait", "demo-1")
+	if err != nil || !strings.HasPrefix(out, "demo-1 terminated") {
+		t.Fatalf("terminated wait: err=%v out=%q", err, out)
+	}
+
+	srv, _ = waitServer(t, []string{"active"}, 0, 0)
+	writeRunFileFor(t, cfg, srv)
+	clock := time.Now()
+	_, _, err = executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+		Now:          func() time.Time { return clock },
+		Sleep:        func(d time.Duration) { clock = clock.Add(d) },
+	}, "session", "wait", "demo-1", "--timeout", "5s")
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for the session demo-1 after 5s") {
+		t.Fatalf("timeout wait: err=%v", err)
+	}
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("timeout exit code = %d, want 1", got)
+	}
+}
+
+func TestSessionList_ShowsNoSignalForAWorkerThatNeverReported(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/sessions":
+			_, _ = io.WriteString(w, `{"sessions":[`+sessionJSON("demo-1", "demo", "worker", "no_signal", false)+`,`+sessionJSON("demo-3", "demo", "worker", "idle", false)+`]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "ls", "-p", "demo")
+	if err != nil {
+		t.Fatalf("session ls failed: %v\nstderr=%s", err, errOut)
+	}
+	if !regexp.MustCompile(`demo-1\s+.*\s+no_signal\s+`).MatchString(out) || !regexp.MustCompile(`demo-3\s+.*\s+idle\s+`).MatchString(out) {
+		t.Fatalf("ls did not tell no_signal from idle:\n%s", out)
 	}
 }

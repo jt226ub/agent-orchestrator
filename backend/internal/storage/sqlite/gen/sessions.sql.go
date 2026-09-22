@@ -144,7 +144,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update, latest_assistant_update_at,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
     conversation_checkpoint_unsettled, conversation_checkpoint_turn_id, native_checkpoint_evidence,
-    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile
+    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile, parent_session_id
 FROM sessions WHERE id = ?
 `
 
@@ -203,6 +203,7 @@ type GetSessionRow struct {
 	Model                            string
 	SessionPermissions               string
 	SessionProfile                   string
+	ParentSessionID                  string
 }
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
@@ -263,6 +264,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.Model,
 		&i.SessionPermissions,
 		&i.SessionProfile,
+		&i.ParentSessionID,
 	)
 	return i, err
 }
@@ -278,10 +280,10 @@ INSERT INTO sessions (
     conversation_checkpoint_unsettled, conversation_checkpoint_turn_id, native_checkpoint_evidence,
     native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
-    session_mode, provider_conversation_id, controller_generation, model, session_permissions, session_profile,
+    session_mode, provider_conversation_id, controller_generation, model, session_permissions, session_profile, parent_session_id,
     created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -333,6 +335,7 @@ type InsertSessionParams struct {
 	Model                            string
 	SessionPermissions               string
 	SessionProfile                   string
+	ParentSessionID                  string
 	CreatedAt                        time.Time
 	UpdatedAt                        time.Time
 	IsPinned                         bool
@@ -390,6 +393,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Model,
 		arg.SessionPermissions,
 		arg.SessionProfile,
+		arg.ParentSessionID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.IsPinned,
@@ -412,7 +416,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update, latest_assistant_update_at,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
     conversation_checkpoint_unsettled, conversation_checkpoint_turn_id, native_checkpoint_evidence,
-    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile
+    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile, parent_session_id
 FROM sessions ORDER BY project_id, num
 `
 
@@ -471,6 +475,7 @@ type ListAllSessionsRow struct {
 	Model                            string
 	SessionPermissions               string
 	SessionProfile                   string
+	ParentSessionID                  string
 }
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
@@ -537,6 +542,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.Model,
 			&i.SessionPermissions,
 			&i.SessionProfile,
+			&i.ParentSessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -563,7 +569,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update, latest_assistant_update_at,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
     conversation_checkpoint_unsettled, conversation_checkpoint_turn_id, native_checkpoint_evidence,
-    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile
+    native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model, session_permissions, session_profile, parent_session_id
 FROM sessions WHERE project_id IS ? ORDER BY num
 `
 
@@ -622,6 +628,7 @@ type ListSessionsByProjectRow struct {
 	Model                            string
 	SessionPermissions               string
 	SessionProfile                   string
+	ParentSessionID                  string
 }
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID *domain.ProjectID) ([]ListSessionsByProjectRow, error) {
@@ -688,6 +695,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID *domain.P
 			&i.Model,
 			&i.SessionPermissions,
 			&i.SessionProfile,
+			&i.ParentSessionID,
 		); err != nil {
 			return nil, err
 		}

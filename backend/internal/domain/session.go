@@ -160,6 +160,12 @@ type SessionRecord struct {
 	IssueID   IssueID      `json:"issueId,omitempty"`
 	Kind      SessionKind  `json:"kind"`
 	Harness   AgentHarness `json:"harness,omitempty"`
+	// ParentSessionID names the same-project orchestrator whose `ao spawn`
+	// created this worker, validated at spawn and never changed afterwards. It
+	// lets the daemon route a worker's turn-end notice back to the orchestrator
+	// that is waiting on it. Empty for orchestrators, manual spawns, and workers
+	// spawned by another worker.
+	ParentSessionID SessionID `json:"parentSessionId,omitempty"`
 	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
 	// the project configuration.
 	ReviewerHarness   ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,agy,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`

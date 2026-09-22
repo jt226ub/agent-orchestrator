@@ -37,6 +37,8 @@ ao session ls [flags]
 ao session ls
 ```
 
+The ACTIVITY column reads `active` while a turn runs, `idle` once it ended, `waiting_input` or `blocked` when the agent needs a person, and `no_signal` when the agent has never reported for this launch (the task may not have started; read the terminal with `ao session tail`).
+
 ```bash
 # List all sessions including terminated, scoped to one project
 ao session ls --include-terminated -p agent-orchestrator
@@ -46,7 +48,7 @@ ao session ls --include-terminated -p agent-orchestrator
 
 ### ao session tail
 
-Print the last lines of a session's terminal: the same scrollback the desktop terminal shows. Use it to read what a worker printed (its last answer, test output, an error) instead of guessing from its activity state; `idle` only means the worker's turn ended.
+Print the last lines of a session's terminal as plain text (escape sequences stripped; `--raw` keeps the bytes the desktop terminal shows). Use it to read what a worker printed (its last answer, test output, an error) instead of guessing from its activity state; `idle` only means the worker's turn ended.
 
 **Syntax:**
 ```
@@ -58,6 +60,7 @@ ao session tail <id> [flags]
 | Flag | Meaning | Default / Required |
 |---|---|---|
 | `--lines int` | Number of trailing terminal lines to print (at most 2000) | 80 |
+| `--raw` | Keep the terminal's escape sequences instead of printing plain text | - |
 | `--json` | Output as JSON | - |
 | `-p, --project string` | Project id to scope the lookup | - |
 
@@ -71,6 +74,36 @@ ao session tail mer-3
 ```bash
 # Read more of the scrollback
 ao session tail mer-3 --lines 300
+```
+
+---
+
+### ao session wait
+
+Block until a session's turn ends. Returns when the session is no longer working: its turn ended (`idle`), it needs input (`waiting_input` or `blocked`), its agent exited, or it was terminated. A session that has already been idle for longer than `--settle` returns at once; one that went idle a moment ago is given that long to start the turn it was just handed. Exit status 1 on timeout.
+
+An orchestrator also receives a daemon-authored message, starting `[AO] Worker <id> ... finished its turn`, whenever a worker it spawned goes from active to idle; `wait` is for the times you want to block on one worker in particular.
+
+**Syntax:**
+```
+ao session wait <id> [flags]
+```
+
+**Flags:**
+
+| Flag | Meaning | Default / Required |
+|---|---|---|
+| `--timeout duration` | Give up after this long (exit status 1) | 30m |
+| `--settle duration` | How long a session must already have been idle to count as settled | 3s |
+| `--json` | Output as JSON (`sessionId`, `outcome`, `status`, `lastActivityAt`, `waitedSeconds`) | - |
+| `-p, --project string` | Project id to scope the lookup | - |
+
+**Examples:**
+
+```bash
+# Hand a worker a task, then block until its turn ends and read what it printed
+ao send --session mer-3 --message "Run the suite and report"
+ao session wait mer-3 --timeout 20m && ao session tail mer-3
 ```
 
 ---

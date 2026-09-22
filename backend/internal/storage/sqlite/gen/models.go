@@ -587,6 +587,7 @@ type Session struct {
 	LatestAssistantUpdateAt          sql.NullTime
 	NativeIdentityObservedAt         sql.NullTime
 	SessionProfile                   string
+	ParentSessionID                  string
 }
 
 type SessionCleanupFact struct {
