@@ -52,13 +52,15 @@ to chat mode when the agent has a Chat driver, and plain-text `ao session tail`;
 reading as idle. The design and decisions live in the LLM Drive
 Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D31).
 
-**Installed versus merged.** The installed build (2026-09-21 evening) carries PRs #1–#14, the
-whole of `fork/main`. Remember for later rebuilds that PR #14 lives in the `ao pty-host`
+**Installed versus merged.** The installed build (2026-09-21, late evening) carries PRs #1–#17, the
+whole of `fork/main`. The turn-end notice was verified live: a worker spawned with the orchestrator's
+`AO_SESSION_ID` reached its chat as an automation message the second the worker's turn ended. Remember for later rebuilds that PR #14 lives in the `ao pty-host`
 process each terminal session keeps alive across daemon restarts: a session started before a
 rebuild keeps the old host until it is killed and restored (`ao session kill` then
-`ao session restore`). Known rough edge: `ao session tail` prints the terminal's raw bytes,
-colour codes included; a plain-text option is a candidate follow-up, as are a turn-end notice
-to the owning orchestrator and a blocking `ao session wait <id>`.
+`ao session restore`). Known rough edges: `ao session wait` on a worker spawned seconds ago can accept the seed
+idle before the agent's first hook arrives (the session view does not expose `firstSignalAt`;
+exposing it is the follow-up), and the notice quotes a worker's last message only for harnesses
+whose Stop hook carries it (Claude Code does, Agy does not).
 
 **The installed build.** `frontend/out/Agent Orchestrator-darwin-arm64/Agent Orchestrator.app`,
 built from `fork/main` with `npm run package` (which runs `build:daemon`, `build:tmux`,
