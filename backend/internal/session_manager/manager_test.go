@@ -1191,7 +1191,7 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
+	if _, err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 1 {
@@ -1222,7 +1222,7 @@ func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-2", "make the button red", nil); err != nil {
+	if _, err := m.Send(ctx, "mer-2", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
@@ -1241,7 +1241,7 @@ func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
-	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
+	if _, err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := msg.msgs[0]; got != "make the button red" {
@@ -1264,7 +1264,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws, DataDir: t.TempDir()})
 
 	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
-	if err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {
+	if _, err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1310,7 +1310,7 @@ func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
 	ws := &fakeWorkspace{}
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
 
-	if err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
+	if _, err := m.Send(ctx, "mer-1", "make the button red", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1335,7 +1335,7 @@ func TestSend_RejectsAttachmentWithEmptyWorkspace(t *testing.T) {
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
 
 	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
-	err := m.Send(ctx, "mer-1", "Make the button blue.", attachment)
+	_, err := m.Send(ctx, "mer-1", "Make the button blue.", attachment)
 	if err == nil {
 		t.Fatal("want an error for a session with no workspace, got nil")
 	}
@@ -9575,7 +9575,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
 	start := time.Now()
-	if err := m.Send(context.Background(), "s1", "hello", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "hello", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -9592,7 +9592,7 @@ func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code"})
 	m := newSendTestManager(t, fakeAgent{}, &fakeMessenger{}, st)
 
-	if err := m.Send(context.Background(), "s1", "continue with the migration", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "continue with the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
@@ -9645,7 +9645,7 @@ func TestSend_PaneFallbackCannotPairLostPromptHookWithPriorTrustedAssistant(t *t
 		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: fakeAgent{}}, Workspace: &fakeWorkspace{},
 		Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm,
 	})
-	if err := manager.Send(ctx, created.ID, "new prompt whose UserPromptSubmit hook is lost", nil); err != nil {
+	if _, err := manager.Send(ctx, created.ID, "new prompt whose UserPromptSubmit hook is lost", nil); err != nil {
 		t.Fatalf("send pane prompt: %v", err)
 	}
 	afterFallback, ok, err := st.GetSession(ctx, created.ID)
@@ -9910,7 +9910,7 @@ func TestSend_PaneFallbackWinsAgainstStaleLifecycleProjection(t *testing.T) {
 		t.Fatal("lifecycle projection did not reach the storage barrier")
 	}
 
-	if err := manager.Send(ctx, created.ID, "pane prompt whose hook is lost", nil); err != nil {
+	if _, err := manager.Send(ctx, created.ID, "pane prompt whose hook is lost", nil); err != nil {
 		t.Fatalf("send pane prompt: %v", err)
 	}
 	afterPane, ok, err := st.GetSession(ctx, created.ID)
@@ -9980,7 +9980,7 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -10008,7 +10008,7 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	var logBuf bytes.Buffer
 	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	if err := m.Send(context.Background(), "s1", "stuck prompt", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "stuck prompt", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) > m.sendConfirm.maxAttempts {
@@ -10037,7 +10037,7 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please", nil)
+	_, err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAwaitingDecision) {
 		t.Fatalf("Send error = %v, want ErrAwaitingDecision", err)
 	}
@@ -10053,7 +10053,7 @@ func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "status update please", nil)
+	_, err := m.Send(context.Background(), "s1", "status update please", nil)
 	if !errors.Is(err, ErrAgentExited) {
 		t.Fatalf("Send error = %v, want ErrAgentExited", err)
 	}
@@ -10072,7 +10072,7 @@ func TestSend_TUIStartupPendingRejectsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, startupReadySignalingAgent{}, msg, st)
 
-	err := m.Send(context.Background(), "s1", "follow-up after spawn", nil)
+	_, err := m.Send(context.Background(), "s1", "follow-up after spawn", nil)
 	if !errors.Is(err, ErrStartupPending) {
 		t.Fatalf("Send error = %v, want ErrStartupPending", err)
 	}
@@ -10091,7 +10091,7 @@ func TestSend_HooklessTUIStartupAllowsDelivery(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "follow-up after spawn", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "follow-up after spawn", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -10109,7 +10109,7 @@ func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	msg := &blockOnSendMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -10127,7 +10127,7 @@ func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 2 {
@@ -10179,7 +10179,7 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	})
 	m.sendConfirm = sendConfirmConfig{pollInterval: time.Millisecond, attemptDeadline: 0, maxAttempts: 3}
 
-	if err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "run the migration", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {
@@ -10200,7 +10200,7 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, submitOnlyAgent{}, msg, st)
 
-	if err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
+	if _, err := m.Send(context.Background(), "s1", "do the thing", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(msg.msgs) != 1 {

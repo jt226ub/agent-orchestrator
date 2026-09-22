@@ -376,6 +376,14 @@ func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) s
 // start begins live provider consumption after any durable native history has
 // been imported. Keeping construction and consumption separate prevents a resume
 // notification from racing ahead of the older turns it follows.
+//
+// It deliberately does not drain the queue. A message queued before a restart
+// waits for the next turn to end, which is later than it should be, but a queued
+// row does not record whether an earlier dispatch already reached the provider:
+// an edit whose BindTurnToProvider failed is left queued and uncertain on
+// purpose, and re-dispatching it here would risk a second provider turn for work
+// the provider may already hold. Redeeming a queued row at resume needs a
+// durable "never handed to the provider" marker first.
 func (c *Controller) start() {
 	go c.project()
 	if c.harness != domain.HarnessCodex {

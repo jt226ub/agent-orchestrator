@@ -61,9 +61,13 @@ func (d fixedSessionModeDefaults) DefaultSessionMode(context.Context) domain.Ses
 // chat launcher. Anything else means two writers on one conversation.
 
 type recordingLauncher struct {
-	preflightErr     error
-	startErr         error
-	turnErr          error
+	preflightErr error
+	startErr     error
+	turnErr      error
+	// relayState is the state the fake relay reports for a delivered turn, so a
+	// test can stand in for a Chat session that queued the message behind a
+	// running turn instead of dispatching it.
+	relayState       domain.TurnState
 	live             bool
 	beforeStart      func(ChatStart)
 	afterReady       func()
@@ -178,16 +182,16 @@ func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID,
 	return "turn-1", l.turnErr
 }
 
-func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
+func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (domain.ConversationTurn, error) {
 	l.relayed = append(l.relayed, text)
 	l.relayIDs = append(l.relayIDs, "")
-	return "turn-relay", l.turnErr
+	return domain.ConversationTurn{ID: "turn-relay", State: l.relayState}, l.turnErr
 }
 
-func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
+func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (domain.ConversationTurn, error) {
 	l.relayed = append(l.relayed, text)
 	l.relayIDs = append(l.relayIDs, clientMessageID)
-	return "turn-relay", l.turnErr
+	return domain.ConversationTurn{ID: "turn-relay", State: l.relayState}, l.turnErr
 }
 
 func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error { //nolint:unparam
@@ -1376,7 +1380,7 @@ func TestSendRoutesIntoTheChatConversation(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 
-	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator", nil); err != nil {
+	if _, err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(launcher.relayed) != 1 || launcher.relayed[0] != "relayed from an orchestrator" {
@@ -1415,7 +1419,7 @@ func TestSendRefusedForTerminatedChatSession(t *testing.T) {
 		t.Fatalf("Kill: %v", err)
 	}
 
-	err = mgr.Send(ctx, rec.ID, "too late", nil)
+	_, err = mgr.Send(ctx, rec.ID, "too late", nil)
 	if !errors.Is(err, ErrTerminated) {
 		t.Fatalf("err = %v, want ErrTerminated", err)
 	}
@@ -1602,6 +1606,42 @@ func TestSpawn_ProfileInterfaceBeatsOrchestratorChatDefault(t *testing.T) {
 			}
 			if runtime.created != tt.wantRuntimes {
 				t.Fatalf("terminal runtimes created = %d, want %d", runtime.created, tt.wantRuntimes)
+			}
+		})
+	}
+}
+
+// A Chat session records a message behind a running turn instead of dispatching
+// it. Send must say so: a relay that reads acceptance as delivery has no way to
+// learn its message is still waiting, which is how orchestrator-to-worker sends
+// went missing while `ao send` exited 0.
+func TestSend_ReportsQueuedDeliveryForAChatSession(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		relayState domain.TurnState
+		want       ports.SendDelivery
+	}{
+		{name: "dispatched", relayState: domain.TurnStateRunning, want: ports.SendDeliveryDispatched},
+		{name: "queued behind a running turn", relayState: domain.TurnStateQueued, want: ports.SendDeliveryQueued},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{relayState: tt.relayState}
+			mgr, store, _ := newChatManager(launcher)
+			rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+				ProjectID: chatTestProject, Kind: domain.KindWorker,
+				Harness: domain.HarnessCodex, RequestedMode: domain.SessionModeChat,
+			})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			_ = store
+
+			delivery, err := mgr.Send(context.Background(), rec.ID, "run the suite", nil)
+			if err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			if delivery != tt.want {
+				t.Fatalf("delivery = %q, want %q", delivery, tt.want)
 			}
 		})
 	}

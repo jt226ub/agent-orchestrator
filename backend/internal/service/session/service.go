@@ -75,7 +75,7 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
-	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) (ports.SendDelivery, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
@@ -570,7 +570,7 @@ func (s *Service) activeOrchestrators(ctx context.Context, projectID domain.Proj
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over in a new workspace."
 
 func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
-	if err := s.manager.Send(ctx, id, orchestratorRetireNotice, nil); err != nil {
+	if _, err := s.manager.Send(ctx, id, orchestratorRetireNotice, nil); err != nil {
 		return fmt.Errorf("send retire notice to %s: %w", id, err)
 	}
 	return nil
@@ -825,8 +825,17 @@ func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (Rollb
 // Send delegates agent messaging to the internal manager. attachment is an
 // optional inline image (e.g. a browser-annotation snapshot) written into the
 // session worktree and referenced from the delivered message.
-func (s *Service) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
-	return toAPIError(s.manager.Send(ctx, id, message, attachment))
+func (s *Service) Send(
+	ctx context.Context,
+	id domain.SessionID,
+	message string,
+	attachment *ports.SpawnAttachment,
+) (ports.SendDelivery, error) {
+	delivery, err := s.manager.Send(ctx, id, message, attachment)
+	if err != nil {
+		return "", toAPIError(err)
+	}
+	return delivery, nil
 }
 
 // Rename updates the user-facing session display name.

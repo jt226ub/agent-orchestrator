@@ -490,10 +490,10 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 	return nil
 }
 
-func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string, attachment *ports.SpawnAttachment) (ports.SendDelivery, error) {
 	f.sent = message
 	f.sentAttachment = attachment
-	return nil
+	return ports.SendDeliveryDispatched, nil
 }
 
 func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {

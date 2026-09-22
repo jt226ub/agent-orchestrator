@@ -176,7 +176,7 @@ type sessionLifecycle interface {
 	RestoreAll(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) (ports.SendDelivery, error)
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
 	// is built after Session Manager during boot (see startShellTerminals), so
@@ -212,7 +212,8 @@ type sessionLifecycleMessenger struct {
 }
 
 func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
-	return m.sessionLifecycle.Send(ctx, id, message, nil)
+	_, err := m.sessionLifecycle.Send(ctx, id, message, nil)
+	return err
 }
 
 // telemetryEmitsSpawned reports whether the ao.session.spawned carrier event can
@@ -561,7 +562,7 @@ func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, te
 	return c.svc.StartChatTurn(ctx, id, text)
 }
 
-func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (domain.ConversationTurn, error) {
 	return c.svc.RelayChatTurn(ctx, id, text)
 }
 
@@ -569,7 +570,7 @@ func (c chatLauncher) RelayChatTurnWithID(
 	ctx context.Context,
 	id domain.SessionID,
 	text, clientMessageID string,
-) (string, error) {
+) (domain.ConversationTurn, error) {
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
 }
 

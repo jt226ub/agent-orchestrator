@@ -892,8 +892,8 @@ func TestAgentSwitchWorkerWaitCancellationIsNotReportable(t *testing.T) {
 	}
 }
 
-func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
-	return nil
+func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) (ports.SendDelivery, error) {
+	return ports.SendDeliveryDispatched, nil
 }
 
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {

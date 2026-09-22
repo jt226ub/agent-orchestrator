@@ -1740,7 +1740,7 @@ func (s *Service) persistPickedModel(id domain.SessionID, previous, next domain.
 //
 // Delivery follows the same rules as any other send: a message arriving mid-turn
 // queues instead of racing the running turn.
-func (s *Service) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+func (s *Service) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (domain.ConversationTurn, error) {
 	return s.RelayChatTurnWithID(ctx, id, text, "")
 }
 
@@ -1752,20 +1752,22 @@ func (s *Service) RelayChatTurnWithID(
 	ctx context.Context,
 	id domain.SessionID,
 	text, clientMessageID string,
-) (string, error) {
+) (domain.ConversationTurn, error) {
 	controller, err := s.Controller(id)
 	if err != nil {
-		return "", err
+		return domain.ConversationTurn{}, err
 	}
+	// The whole turn, not just its id: its state is how a relay learns the
+	// message is queued behind a running turn rather than on its way to the agent.
 	turn, err := controller.Send(ctx, ports.ChatUserMessage{
 		Text:            text,
 		ClientMessageID: clientMessageID,
 		Origin:          domain.MessageOriginAutomation,
 	})
 	if err != nil {
-		return "", err
+		return domain.ConversationTurn{}, err
 	}
-	return turn.ID, nil
+	return turn, nil
 }
 
 // StopChat releases a session's controller.

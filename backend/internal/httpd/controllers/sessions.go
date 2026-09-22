@@ -102,7 +102,7 @@ type SessionService interface {
 	SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (domain.Session, error)
 	SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
-	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) (ports.SendDelivery, error)
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -1616,11 +1616,14 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		attachment = &decoded
 	}
 	message := domain.SanitizeControlChars(in.Message)
-	if err := c.Svc.Send(r.Context(), sessionID(r), message, attachment); err != nil {
+	delivery, err := c.Svc.Send(r.Context(), sessionID(r), message, attachment)
+	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
+	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{
+		OK: true, SessionID: sessionID(r), Message: message, Delivery: string(delivery),
+	})
 }
 
 func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request) {

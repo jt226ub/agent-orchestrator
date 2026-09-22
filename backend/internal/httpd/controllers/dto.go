@@ -915,6 +915,10 @@ type SendSessionMessageResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Message   string           `json:"message"`
+	// Delivery distinguishes a message that reached the agent ("dispatched")
+	// from one a Chat session recorded behind a running turn ("queued"), so a
+	// relay is not left reading acceptance as delivery.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.

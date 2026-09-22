@@ -12959,6 +12959,8 @@ components:
       type: object
     SendSessionMessageResponse:
       properties:
+        delivery:
+          type: string
         message:
           type: string
         ok:

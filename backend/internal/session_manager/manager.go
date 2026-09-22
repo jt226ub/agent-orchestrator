@@ -3819,7 +3819,12 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // (flipped to active by the user-prompt-submit hook) and re-sends Enter until
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
-func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+func (m *Manager) Send(
+	ctx context.Context,
+	id domain.SessionID,
+	message string,
+	attachment *ports.SpawnAttachment,
+) (ports.SendDelivery, error) {
 	if attachment != nil {
 		// Reuses StageAttachments rather than a bespoke writer: it already owns the
 		// empty-workspace guard (refusing beats writing under the daemon's cwd),
@@ -3827,7 +3832,7 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string,
 		// creation, and the git-exclude step.
 		refs, err := m.StageAttachments(ctx, id, []ports.SpawnAttachment{*attachment})
 		if err != nil {
-			return fmt.Errorf("send %s: attachment: %w", id, err)
+			return "", fmt.Errorf("send %s: attachment: %w", id, err)
 		}
 		message = appendAttachmentReferences(message, refs)
 	}
@@ -3837,28 +3842,33 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string,
 // send carries an optional idempotency key used by durable transition-message
 // retries. Ordinary callers leave it empty; the outbox preserves the key across
 // restart, rollback, and even a second overlapping handoff.
-func (m *Manager) send(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+func (m *Manager) send(
+	ctx context.Context,
+	id domain.SessionID,
+	message, clientMessageID string,
+) (ports.SendDelivery, error) {
 	// A controller transition deliberately has a short interval with no writer.
 	// Queue internal/lifecycle sends durably instead of racing either controller
 	// or dropping coordination work; the transition worker drains this outbox
 	// only after the target controller is active.
 	if queued, err := m.queueDuringInterfaceTransition(ctx, id, message, clientMessageID); err != nil {
-		return fmt.Errorf("send %s: interface transition: %w", id, err)
+		return "", fmt.Errorf("send %s: interface transition: %w", id, err)
 	} else if queued {
-		return nil
+		// The transition outbox holds it until the target controller is active.
+		return ports.SendDeliveryQueued, nil
 	}
 	// Chat mode has no pane to type into, so it does not go through the messenger
 	// at all. Without this branch the send reached the runtime guard and was
 	// refused as "missing runtime handles" — true of the handles, wrong about the
 	// session, and it left `ao send` and orchestrator-to-worker relay unable to
 	// reach a chat worker.
-	if handled, err := m.sendChat(ctx, id, message, clientMessageID); handled {
-		return err
+	if handled, delivery, err := m.sendChat(ctx, id, message, clientMessageID); handled {
+		return delivery, err
 	}
 
 	message, err := m.prepareOutboundMessage(ctx, id, message)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var afterWrite func(context.Context) error
 	if strings.TrimSpace(message) != "" {
@@ -3873,21 +3883,21 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 	}
 	outcome, err := m.messenger.DeliverWithPostWrite(ctx, id, message, afterWrite)
 	if err != nil {
-		return fmt.Errorf("send %s: %w", id, err)
+		return "", fmt.Errorf("send %s: %w", id, err)
 	}
 	switch outcome {
 	case sessionguard.SuppressedNotFound:
-		return fmt.Errorf("send %s: %w", id, ErrNotFound)
+		return "", fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
-		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+		return "", fmt.Errorf("send %s: %w", id, ErrTerminated)
 	case sessionguard.SuppressedExited:
-		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
+		return "", fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
-		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+		return "", fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
 	case sessionguard.SuppressedStartupPending:
-		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
+		return "", fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
-		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
+		return "", fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
 	}
 	// confirmActive only helps — and is only SAFE — when the harness reports
 	// both a prompt-submit signal (so the loop can observe active) and a
@@ -3902,15 +3912,15 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		// was already delivered above); log so a store error is not swallowed
 		// silently.
 		m.logger.Warn("send: confirm skipped, session lookup failed", "sessionID", id, "error", err)
-		return nil
+		return ports.SendDeliveryDispatched, nil
 	}
 	if !ok {
-		return nil
+		return ports.SendDeliveryDispatched, nil
 	}
 	if m.harnessNudgeSafe(rec.Harness) {
 		m.confirmActive(ctx, m.messenger, id)
 	}
-	return nil
+	return ports.SendDeliveryDispatched, nil
 }
 
 func (m *Manager) prepareOutboundMessage(ctx context.Context, id domain.SessionID, message string) (string, error) {

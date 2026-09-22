@@ -42,11 +42,11 @@ type ChatLauncher interface {
 	// RelayChatTurn delivers a message AO is carrying on someone else's behalf —
 	// `ao send`, an orchestrator writing to a worker, an automation — as a turn
 	// attributed to automation rather than to the human at the keyboard.
-	RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error)
+	RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (domain.ConversationTurn, error)
 	// RelayChatTurnWithID is the durable-retry form. Implementations must pass
 	// the key through to ChatUserMessage so retry after an uncertain outbox
 	// acknowledgement cannot create a second provider turn.
-	RelayChatTurnWithID(ctx context.Context, id domain.SessionID, text, clientMessageID string) (string, error)
+	RelayChatTurnWithID(ctx context.Context, id domain.SessionID, text, clientMessageID string) (domain.ConversationTurn, error)
 	// HasLiveChatController reports whether the daemon still owns a controller
 	// for the session. Resume uses this to distinguish a stale durable activity
 	// state left by an older daemon from a genuinely live controller.
@@ -244,31 +244,46 @@ func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
 // receive a message, and one whose controller is gone cannot either. Busy is not
 // a refusal — the controller queues a mid-turn message, which is strictly better
 // than the terminal path's habit of dropping a nudge it cannot safely deliver.
-func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message, clientMessageID string) (bool, error) {
+func (m *Manager) sendChat(
+	ctx context.Context,
+	id domain.SessionID,
+	message, clientMessageID string,
+) (bool, ports.SendDelivery, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
-		return false, fmt.Errorf("send %s: session: %w", id, err)
+		return false, "", fmt.Errorf("send %s: session: %w", id, err)
 	}
 	if !ok || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
-		return false, nil
+		return false, "", nil
 	}
 	if m.chat == nil {
-		return true, fmt.Errorf("send %s: %w: chat mode is not available in this build",
+		return true, "", fmt.Errorf("send %s: %w: chat mode is not available in this build",
 			id, ports.ErrChatUnsupported)
 	}
 	if rec.IsTerminated {
-		return true, fmt.Errorf("send %s: %w", id, ErrTerminated)
+		return true, "", fmt.Errorf("send %s: %w", id, ErrTerminated)
 	}
-	var relayErr error
+	var (
+		turn     domain.ConversationTurn
+		relayErr error
+	)
 	if clientMessageID != "" {
-		_, relayErr = m.chat.RelayChatTurnWithID(ctx, id, message, clientMessageID)
+		turn, relayErr = m.chat.RelayChatTurnWithID(ctx, id, message, clientMessageID)
 	} else {
-		_, relayErr = m.chat.RelayChatTurn(ctx, id, message)
+		turn, relayErr = m.chat.RelayChatTurn(ctx, id, message)
 	}
 	if relayErr != nil {
-		return true, fmt.Errorf("send %s: %w", id, relayErr)
+		return true, "", fmt.Errorf("send %s: %w", id, relayErr)
 	}
-	return true, nil
+	// A queued turn is recorded but has not reached the agent: it waits for the
+	// running turn to end. Report that rather than letting the caller read
+	// success as delivery.
+	if turn.State == domain.TurnStateQueued {
+		m.logger.Info("send: message queued behind a running turn",
+			"sessionID", id, "turn", turn.ID)
+		return true, ports.SendDeliveryQueued, nil
+	}
+	return true, ports.SendDeliveryDispatched, nil
 }
 
 // SessionModeDefaults supplies the daemon-owned default session interface.

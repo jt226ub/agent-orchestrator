@@ -2525,16 +2525,16 @@ func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain
 	f.ready = append(f.ready, id)
 	return f.readyErr
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) (ports.SendDelivery, error) {
 	if f.sendFunc != nil {
-		return f.sendFunc(id, message)
+		return ports.SendDeliveryDispatched, f.sendFunc(id, message)
 	}
 	if f.sendErr != nil {
-		return f.sendErr
+		return "", f.sendErr
 	}
 	f.sent = append(f.sent, id)
 	f.sentMessages = append(f.sentMessages, message)
-	return nil
+	return ports.SendDeliveryDispatched, nil
 }
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)

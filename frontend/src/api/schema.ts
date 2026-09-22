@@ -4647,6 +4647,7 @@ export interface components {
             message: string;
         };
         SendSessionMessageResponse: {
+            delivery?: string;
             message: string;
             ok: boolean;
             sessionId: string;

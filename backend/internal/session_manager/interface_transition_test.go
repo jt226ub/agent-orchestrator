@@ -745,15 +745,15 @@ func (c *transitionChat) StartChat(ctx context.Context, cfg ChatStart) (ChatStar
 func (*transitionChat) StartChatTurn(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil
 }
-func (c *transitionChat) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
+func (c *transitionChat) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (domain.ConversationTurn, error) {
 	c.relayMessages = append(c.relayMessages, text)
 	c.relayIDs = append(c.relayIDs, "")
-	return "", nil
+	return domain.ConversationTurn{}, nil
 }
-func (c *transitionChat) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
+func (c *transitionChat) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (domain.ConversationTurn, error) {
 	c.relayMessages = append(c.relayMessages, text)
 	c.relayIDs = append(c.relayIDs, clientMessageID)
-	return "", nil
+	return domain.ConversationTurn{}, nil
 }
 func (*transitionChat) HasLiveChatController(domain.SessionID) bool { return false }
 func (c *transitionChat) StopChat(_ context.Context, _ domain.SessionID) error {
@@ -2931,7 +2931,7 @@ func TestSendQueuesDuringInterfaceTransition(t *testing.T) {
 		TargetMode: domain.SessionModeChat, Policy: domain.SessionInterfaceTransitionDrain,
 		Phase: domain.SessionInterfaceTransitionDraining, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
+	if _, err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
 		t.Fatal(err)
 	}
 	messages, err := store.ListPendingSessionInterfaceTransitionMessages(context.Background(), "transition-1")
@@ -2964,7 +2964,7 @@ func TestTransitionMessagesReturnToSourceAfterPreflightFailure(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("preflight did not start")
 	}
-	if err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
+	if _, err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
 		t.Fatal(err)
 	}
 	close(chat.preflightRelease)
