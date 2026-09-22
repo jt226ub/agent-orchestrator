@@ -44,7 +44,9 @@ mode (request > profile > parent conversation > project default); #12 `ao sessio
 leaves a worktree that a live session still uses; #13 `ao session tail` reads a session's
 terminal scrollback; #14 the pty-host queues keystrokes so a multi-line `ao send` to a TUI
 session is delivered whole (before it, everything after the first kilobyte could be lost
-while the agent was still consuming the paste); #16 worker turn signals: a daemon-authored
+while the agent was still consuming the paste); #19 turn-end notices delivered detached from the
+hook request and retried (the synchronous flush deadlocked the chat controller); #20 the daemon
+log at `~/.ao/data/logs/daemon.log`; #16 worker turn signals: a daemon-authored
 `[AO] Worker <id> ... finished its turn` message to the owning orchestrator (queued while it is
 busy), `ao session wait`, `no_signal` in `ao session ls`, orchestrator-spawned workers default
 to chat mode when the agent has a Chat driver, and plain-text `ao session tail`; #17 an agy Stop hook with
@@ -52,7 +54,7 @@ to chat mode when the agent has a Chat driver, and plain-text `ao session tail`;
 reading as idle. The design and decisions live in the LLM Drive
 Skill repository, `modules/ao-fork/DESIGN.md` and `DECISIONS.md` (D22–D31).
 
-**Installed versus merged.** The installed build (2026-09-21, late evening) carries PRs #1–#17, the
+**Installed versus merged.** The installed build (2026-09-22, early morning) carries PRs #1–#20, the
 whole of `fork/main`. The turn-end notice was verified live: a worker spawned with the orchestrator's
 `AO_SESSION_ID` reached its chat as an automation message the second the worker's turn ended. Remember for later rebuilds that PR #14 lives in the `ao pty-host`
 process each terminal session keeps alive across daemon restarts: a session started before a
@@ -73,10 +75,14 @@ nothing replaces the build behind the user's back.
 
 **Logs.** The daemon writes its log to `~/.ao/data/logs/daemon.log` (32 MiB, one previous file
 kept as `daemon.log.1`) as well as stderr, so a session that stops responding can be explained
-after the fact. Known failure seen 2026-09-22: a chat-mode orchestrator's controller stopped
-taking writes (send, interrupt and kill all hung; reads worked) after a chat→terminal switch
-was attempted and cancelled. Recovery: quit the app, kill that session's `ao chat-host`
-process, relaunch; the daemon resumes the same conversation on a fresh host.
+after the fact. Failure seen twice on 2026-09-22 (02:40Z and 06:30Z), fixed by PR #19: the chat
+orchestrator's controller stopped taking writes (send, interrupt and kill all hung; reads
+worked) at the exact moment one of its turns ended while a worker's turn-end notice was queued.
+PR #16 flushed that queue synchronously inside the controller's own idle report, re-entering
+the controller's send path from its event loop and deadlocking it. PR #19 delivers detached.
+Recovery if a controller ever wedges again: quit the app, kill that session's `ao chat-host`
+process, relaunch; the daemon resumes the same conversation on a fresh host, and
+`logs/daemon.log` now says what happened.
 
 **Data.** The app uses the default data dir `~/.ao/data`: `ao.db`, worktrees, prompts, and
 the daemon-wide texts the fork adds — `rules/contract.md` (the Drive contract),
