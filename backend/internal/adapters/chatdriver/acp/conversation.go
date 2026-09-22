@@ -770,11 +770,24 @@ func formatTokens(tokens int64) string {
 	return fmt.Sprintf("%.1fk tokens", float64(tokens)/1000)
 }
 
+// turnState maps an ACP stop reason onto AO's durable turn state.
+//
+// A budget stop -- max_tokens, max_turn_requests -- ended the turn normally: the
+// assistant answered up to a limit that resets for the next turn. It matters that
+// these are not recorded as failures, because a failed turn deliberately holds
+// everything queued behind it rather than cascading through the same outage
+// (issue #4861). Calling a budget stop a failure stranded queued work: an
+// `ao send` to a busy Chat session was accepted and durably queued, the turn then
+// ended at its tool-call budget, and the message was never dispatched or
+// reported. A refusal keeps failing, since whatever produced it is likely to
+// produce it again for the next queued message, which is the cascade #4861 is
+// about. An unknown reason stays failed too: it is not safe to assume a stop AO
+// does not recognise left the conversation able to take more work.
 func turnState(reason acpsdk.StopReason) domain.TurnState {
 	switch reason {
 	case acpsdk.StopReasonCancelled:
 		return domain.TurnStateInterrupted
-	case acpsdk.StopReasonEndTurn:
+	case acpsdk.StopReasonEndTurn, acpsdk.StopReasonMaxTokens, acpsdk.StopReasonMaxTurnRequests:
 		return domain.TurnStateCompleted
 	default:
 		return domain.TurnStateFailed
