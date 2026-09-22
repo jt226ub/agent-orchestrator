@@ -1,6 +1,8 @@
 package lifecycle
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,14 @@ func endTurn(t *testing.T, m *Manager, id domain.SessionID) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Delivery is detached from the hook request; settle it before asserting.
+	m.waitTurnEndDeliveries()
+}
+
+func pendingNotices(m *Manager, orchestrator domain.SessionID) int {
+	m.turnEnds.mu.Lock()
+	defer m.turnEnds.mu.Unlock()
+	return len(m.turnEnds.pending[orchestrator])
 }
 
 func TestTurnEnd_NotifiesIdleOrchestrator(t *testing.T) {
@@ -134,10 +144,57 @@ func TestTurnEnd_DropsNoticeForTerminatedOrchestrator(t *testing.T) {
 	if len(msg.msgs) != 0 {
 		t.Fatalf("terminated orchestrator received %q", msg.msgs)
 	}
-	m.turnEnds.mu.Lock()
-	queued := len(m.turnEnds.pending["mer-0"])
-	m.turnEnds.mu.Unlock()
-	if queued != 0 {
+	if queued := pendingNotices(m, "mer-0"); queued != 0 {
 		t.Fatalf("notice queued for a terminated orchestrator: %d", queued)
+	}
+}
+
+// A write the controller refuses (a wedged chat controller, a timeout) comes
+// back from the guard as Sent plus an error. The notice has not landed: it is
+// queued and delivered by the periodic retry once the write succeeds.
+func TestTurnEnd_QueuesFailedWritesAndRetriesThem(t *testing.T) {
+	m, _, msg := turnEndFixture(domain.ActivityIdle)
+	msg.err = errors.New("chat controller: send timed out")
+
+	endTurn(t, m, "mer-1")
+	if len(msg.msgs) != 0 || pendingNotices(m, "mer-0") != 1 {
+		t.Fatalf("failed write: delivered=%d queued=%d, want 0 delivered and 1 queued", len(msg.msgs), pendingNotices(m, "mer-0"))
+	}
+
+	// Still failing: the retry keeps it.
+	m.RetryTurnEndNotices(ctx)
+	if pendingNotices(m, "mer-0") != 1 {
+		t.Fatalf("retry against a failing controller dropped the notice")
+	}
+
+	msg.err = nil
+	m.RetryTurnEndNotices(ctx)
+	if len(msg.msgs) != 1 || msg.ids[0] != "mer-0" || !strings.Contains(msg.msgs[0], "Worker mer-1") {
+		t.Fatalf("retry delivered %q to %v, want the queued notice to mer-0", msg.msgs, msg.ids)
+	}
+	if pendingNotices(m, "mer-0") != 0 {
+		t.Fatalf("delivered notice still queued")
+	}
+	m.RetryTurnEndNotices(ctx)
+	if len(msg.msgs) != 1 {
+		t.Fatalf("retry resent a delivered notice: %q", msg.msgs)
+	}
+}
+
+// The hook request that reports the turn end may already be cancelled by the
+// time delivery runs; delivery must not inherit that cancellation.
+func TestTurnEnd_DeliveryOutlivesTheHookRequest(t *testing.T) {
+	m, _, msg := turnEndFixture(domain.ActivityIdle)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := m.ApplyActivitySignal(cancelled, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop", LaunchID: "launch-1", Timestamp: time.Now(),
+	}); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	m.waitTurnEndDeliveries()
+	if len(msg.msgs) != 1 {
+		t.Fatalf("delivery under a cancelled hook context produced %q, want one notice", msg.msgs)
 	}
 }

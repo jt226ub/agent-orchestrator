@@ -17,6 +17,16 @@ import (
 // pasting a whole report into the orchestrator's turn.
 const turnEndExcerptRunes = 600
 
+// turnEndDeliveryTimeout bounds one delivery attempt. Delivery runs detached
+// from the hook request that reported the worker's turn end: a wedged
+// orchestrator controller must neither stall that hook nor hold a goroutine
+// forever, and a notice that could not be written is queued, not dropped.
+const turnEndDeliveryTimeout = 20 * time.Second
+
+// TurnEndRetryInterval is how often queued notices are retried (see
+// RunTurnEndRetries) in addition to the flush on the orchestrator's next idle.
+const TurnEndRetryInterval = 30 * time.Second
+
 // turnEndState holds notices that could not be delivered the moment a worker's
 // turn ended because its orchestrator was mid-turn, awaiting the human, or not
 // yet accepting input. They are flushed, as one message, when that
@@ -24,6 +34,8 @@ const turnEndExcerptRunes = 600
 type turnEndState struct {
 	mu      sync.Mutex
 	pending map[domain.SessionID][]string
+	// inflight counts detached deliveries so tests (and shutdown) can wait.
+	inflight sync.WaitGroup
 }
 
 // workerTurnEnded reports the one transition that means "the worker finished
@@ -72,11 +84,68 @@ func boundedExcerpt(text string, limit int) string {
 // orchestrator that just went idle receives whatever its workers reported
 // while it was busy.
 func (m *Manager) applyTurnEndSignals(ctx context.Context, prev domain.ActivityState, next domain.SessionRecord, now time.Time) {
+	if m.guard == nil {
+		return
+	}
 	if workerTurnEnded(prev, next) {
-		m.deliverTurnEndNotice(ctx, next.ParentSessionID, turnEndNotice(next, now))
+		parent, notice := next.ParentSessionID, turnEndNotice(next, now)
+		m.goTurnEnd(ctx, func(ctx context.Context) { m.deliverTurnEndNotice(ctx, parent, notice) })
 	}
 	if next.Kind == domain.KindOrchestrator && next.Activity.State == domain.ActivityIdle && prev != domain.ActivityIdle {
-		m.flushTurnEndNotices(ctx, next.ID)
+		id := next.ID
+		m.goTurnEnd(ctx, func(ctx context.Context) { m.flushTurnEndNotices(ctx, id) })
+	}
+}
+
+// goTurnEnd runs one delivery step detached from the caller's request context
+// and bounded by turnEndDeliveryTimeout.
+func (m *Manager) goTurnEnd(parent context.Context, step func(context.Context)) {
+	m.turnEnds.inflight.Add(1)
+	go func() {
+		defer m.turnEnds.inflight.Done()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), turnEndDeliveryTimeout)
+		defer cancel()
+		step(ctx)
+	}()
+}
+
+// waitTurnEndDeliveries blocks until every detached delivery step has
+// finished. Tests use it; production never needs to wait.
+func (m *Manager) waitTurnEndDeliveries() { m.turnEnds.inflight.Wait() }
+
+// RunTurnEndRetries retries queued notices every interval until ctx ends. The
+// flush on an orchestrator's next idle covers the common case; this covers an
+// orchestrator that stays idle while its controller was briefly unable to
+// take a message, and a delivery that timed out.
+func (m *Manager) RunTurnEndRetries(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = TurnEndRetryInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.RetryTurnEndNotices(ctx)
+		}
+	}
+}
+
+// RetryTurnEndNotices attempts one flush for every orchestrator with queued
+// notices. Each attempt is bounded by turnEndDeliveryTimeout.
+func (m *Manager) RetryTurnEndNotices(ctx context.Context) {
+	m.turnEnds.mu.Lock()
+	targets := make([]domain.SessionID, 0, len(m.turnEnds.pending))
+	for id := range m.turnEnds.pending {
+		targets = append(targets, id)
+	}
+	m.turnEnds.mu.Unlock()
+	for _, id := range targets {
+		attempt, cancel := context.WithTimeout(ctx, turnEndDeliveryTimeout)
+		m.flushTurnEndNotices(attempt, id)
+		cancel()
 	}
 }
 
@@ -89,15 +158,19 @@ func (m *Manager) deliverTurnEndNotice(ctx context.Context, orchestrator domain.
 		return
 	}
 	outcome, err := m.guard.NudgeCoordination(ctx, orchestrator, notice, m.steerActive)
-	if err != nil {
-		slog.Default().Warn("lifecycle: worker turn-end notice failed", "orchestrator", orchestrator, "outcome", outcome.String(), "err", err)
-	}
-	switch outcome {
-	case sessionguard.Sent:
+	switch turnEndOutcome(outcome, err) {
+	case turnEndDelivered:
 		return
-	case sessionguard.SuppressedNotFound, sessionguard.SuppressedTerminated, sessionguard.SuppressedExited:
+	case turnEndDropped:
 		slog.Default().Info("lifecycle: worker turn-end notice dropped; orchestrator unavailable", "orchestrator", orchestrator, "outcome", outcome.String())
 		return
+	}
+	if err != nil {
+		// The guard reports Sent with an error when the write itself failed
+		// (a controller that refused or timed out): the notice did not land.
+		slog.Default().Warn("lifecycle: worker turn-end notice failed; queued for retry", "orchestrator", orchestrator, "outcome", outcome.String(), "err", err)
+	} else {
+		slog.Default().Info("lifecycle: worker turn-end notice queued", "orchestrator", orchestrator, "outcome", outcome.String())
 	}
 	m.turnEnds.mu.Lock()
 	if m.turnEnds.pending == nil {
@@ -121,10 +194,10 @@ func (m *Manager) flushTurnEndNotices(ctx context.Context, orchestrator domain.S
 	}
 	outcome, err := m.guard.NudgeCoordination(ctx, orchestrator, strings.Join(queued, "\n\n"), m.steerActive)
 	if err != nil {
-		slog.Default().Warn("lifecycle: queued worker turn-end notices failed", "orchestrator", orchestrator, "count", len(queued), "err", err)
+		slog.Default().Warn("lifecycle: queued worker turn-end notices failed; kept for retry", "orchestrator", orchestrator, "count", len(queued), "err", err)
 	}
-	switch outcome {
-	case sessionguard.Sent, sessionguard.SuppressedNotFound, sessionguard.SuppressedTerminated, sessionguard.SuppressedExited:
+	switch turnEndOutcome(outcome, err) {
+	case turnEndDelivered, turnEndDropped:
 		m.turnEnds.mu.Lock()
 		// Drop only what was flushed; a notice queued meanwhile stays.
 		remaining := m.turnEnds.pending[orchestrator][len(queued):]
@@ -134,5 +207,33 @@ func (m *Manager) flushTurnEndNotices(ctx context.Context, orchestrator domain.S
 			m.turnEnds.pending[orchestrator] = append([]string(nil), remaining...)
 		}
 		m.turnEnds.mu.Unlock()
+	}
+}
+
+type turnEndResult int
+
+const (
+	// turnEndRetry means the notice did not land but the orchestrator may take
+	// it later: busy, awaiting the human, not yet accepting input, or a write
+	// that failed or timed out.
+	turnEndRetry turnEndResult = iota
+	turnEndDelivered
+	turnEndDropped
+)
+
+// turnEndOutcome classifies a guard outcome. Sent counts only without an
+// error: the guard returns Sent alongside the error when the messenger write
+// itself failed, and that notice has not reached anyone.
+func turnEndOutcome(outcome sessionguard.Outcome, err error) turnEndResult {
+	switch outcome {
+	case sessionguard.Sent:
+		if err == nil {
+			return turnEndDelivered
+		}
+		return turnEndRetry
+	case sessionguard.SuppressedNotFound, sessionguard.SuppressedTerminated, sessionguard.SuppressedExited:
+		return turnEndDropped
+	default:
+		return turnEndRetry
 	}
 }
