@@ -94,6 +94,28 @@ standing rules are layered contract → role file → project rules → profile 
 plan. `deepseek-expert` needs `ANTHROPIC_AUTH_TOKEN` added to its environment before it can
 run; the key is deliberately not stored by the tooling.
 
+**Upgrading a database made before the 2026-09-22 upstream merge.** Upstream shipped its
+own `0148_notification_dismissal`, colliding with this fork's `0148`-`0150`; the fork's three
+moved to `0151`-`0153`, above every version upstream has shipped. goose keys on the version
+number alone, so a database that recorded 148-150 as the fork's will refuse to start
+(`0151_session_profile.sql: duplicate column name: session_profile`) and would silently skip
+upstream's 0148. Reconcile it once, with the app quit and a copy of `ao.db` kept aside:
+
+```sql
+BEGIN;
+-- Upstream 0148, by hand: version 148 is already recorded against the fork's old migration.
+ALTER TABLE notifications ADD COLUMN dismissed_at TIMESTAMP;
+CREATE INDEX idx_notifications_live_history
+    ON notifications(created_at DESC, id DESC)
+    WHERE dismissed_at IS NULL;
+-- The fork's renumbered migrations: their schema is already here, so record them as done.
+INSERT INTO goose_db_version (version_id, is_applied) VALUES (151, 1), (152, 1), (153, 1);
+COMMIT;
+```
+
+A database created after the merge needs none of this. Verified on a copy of the real
+`~/.ao/data/ao.db`: the daemon refuses to start before it and reaches `readyz` after.
+
 **To rebuild after a change.** Two quirks of this machine first: with Node 26 the
 packager's `extract-zip` exits silently mid-extraction (no bundle, exit 0), so the
 Electron packaging step runs under the Node 22 that `build:acp-runtime` downloads; and the
