@@ -103,7 +103,7 @@ tmux 3.5a and is reused by every later build (delete it only if the pinned versi
 `scripts/build-tmux.mjs` change).
 
 ```bash
-cd "/Volumes/External Data/Coding Projects/agent-orchestrator"
+cd "/Volumes/External Data/Coding Projects/AO/agent-orchestrator"
 git checkout fork/main && git pull --ff-only
 cd frontend && npm run prepackage
 PATH="$PWD/resources/acp-runtime/node/bin:$PATH" npx electron-forge package
