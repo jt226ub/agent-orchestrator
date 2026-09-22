@@ -3,7 +3,7 @@
 `jt226ub/agent-orchestrator` is a fork of `Untrivial-ai/agent-orchestrator` that adds, in
 order: Antigravity plan-quota capacity, role profiles, workflow templates, and the Drive
 contract as the first layer of every session's rules. The design and the order of work are
-in the LLM Drive Skill repository, `modules/ao-fork/DESIGN.md` (decision D22 there).
+in `../workspace/docs/ao-fork/DESIGN.md` (decision D22 in `../workspace/docs/DECISIONS.md`).
 
 ## Standing rules (the user's, 2026-09-17)
 
@@ -32,7 +32,8 @@ in the LLM Drive Skill repository, `modules/ao-fork/DESIGN.md` (decision D22 the
 ## Using the fork (from 2026-09-21)
 
 The fork is the user's day-to-day Agent Orchestrator: it replaced the stock app and the
-LLM Drive Skill sidecar (skill repo decisions D28, D29).
+LLM Drive Skill sidecar (decisions D28 and D29 in `../workspace/docs/DECISIONS.md`; that
+repository is now `../archive/llm-drive-skill/`).
 
 **What `fork/main` carries**, upstream `main` plus, in order: PR #1 Antigravity plan
 capacity; #2 role profiles; #3 workflow templates; #4 New Task profile chip; #5 profile
