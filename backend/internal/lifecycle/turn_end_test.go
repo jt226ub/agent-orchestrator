@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,5 +197,90 @@ func TestTurnEnd_DeliveryOutlivesTheHookRequest(t *testing.T) {
 	m.waitTurnEndDeliveries()
 	if len(msg.msgs) != 1 {
 		t.Fatalf("delivery under a cancelled hook context produced %q, want one notice", msg.msgs)
+	}
+}
+
+// blockingMessenger holds every Send until the test releases it, so two
+// flushes can be in flight at once: the window an orchestrator's idle flush
+// and the 30-second retry really share.
+type blockingMessenger struct {
+	mu      sync.Mutex
+	msgs    []string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+	b.entered <- struct{}{}
+	<-b.release
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.msgs = append(b.msgs, msg)
+	return nil
+}
+
+func (b *blockingMessenger) sent() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.msgs...)
+}
+
+// Two concurrent flushes must not send the same queued notice twice, and the
+// slower one must not discard a notice queued while it was writing. Both
+// happen when a flush reads the queue, writes without holding it, and then
+// trims by position: the retry ticker and an idle flush overlap in production.
+func TestTurnEnd_ConcurrentFlushesNeitherDuplicateNorDropNotices(t *testing.T) {
+	st := newFakeStore()
+	msg := &blockingMessenger{entered: make(chan struct{}, 4), release: make(chan struct{})}
+	m := New(st, msg)
+	orch := domain.SessionRecord{
+		ID: "mer-0", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		FirstSignalAt: time.Now().Add(-time.Minute),
+	}
+	st.sessions["mer-0"] = orch
+
+	// One notice is already queued for an idle orchestrator.
+	m.turnEnds.mu.Lock()
+	m.turnEnds.pending = map[domain.SessionID][]string{"mer-0": {"[AO] Worker mer-1 finished its turn."}}
+	m.turnEnds.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.flushTurnEndNotices(ctx, "mer-0")
+		}()
+	}
+
+	// Let both reach the write, then queue a second notice behind them.
+	<-msg.entered
+	select {
+	case <-msg.entered:
+		// Both are inside Send: they are holding the same batch.
+	case <-time.After(2 * time.Second):
+		// Only one flush took the batch, which is the behaviour we want.
+	}
+	m.turnEnds.mu.Lock()
+	m.turnEnds.pending["mer-0"] = append(m.turnEnds.pending["mer-0"], "[AO] Worker mer-2 finished its turn.")
+	m.turnEnds.mu.Unlock()
+	close(msg.release)
+	wg.Wait()
+
+	sent := msg.sent()
+	for _, got := range sent {
+		if strings.Count(got, "Worker mer-1") > 1 {
+			t.Fatalf("one flush repeated a notice within a single message:\n%s", got)
+		}
+	}
+	joined := strings.Join(sent, "\n")
+	if n := strings.Count(joined, "Worker mer-1"); n != 1 {
+		t.Fatalf("Worker mer-1 notice delivered %d times, want exactly 1:\n%s", n, joined)
+	}
+	// mer-2 was queued while the writes were in flight: it must still be
+	// deliverable, never trimmed away by a positional cut.
+	if strings.Count(joined, "Worker mer-2") == 0 && pendingNotices(m, "mer-0") == 0 {
+		t.Fatal("notice queued during a flush was neither delivered nor left queued: it was dropped")
 	}
 }

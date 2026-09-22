@@ -181,13 +181,23 @@ func (m *Manager) deliverTurnEndNotice(ctx context.Context, orchestrator domain.
 }
 
 // flushTurnEndNotices delivers an orchestrator's queued notices as one message.
-// A refused flush keeps them for the next idle; a delivered one clears them.
+// A refused flush returns them for the next idle; a delivered one is done with
+// them.
+//
+// The batch leaves the queue before the write, not after. Two flushes overlap
+// in production -- an orchestrator's idle flush and the 30-second retry -- and
+// a batch left in place while the write ran was read by both: the orchestrator
+// saw the same notice twice, and the slower flush then cut len(queued) entries
+// off the front of a queue that had grown meanwhile, discarding notices that
+// had never been sent. Taking the batch out under the lock makes one flush its
+// only owner.
 func (m *Manager) flushTurnEndNotices(ctx context.Context, orchestrator domain.SessionID) {
 	if m.guard == nil {
 		return
 	}
 	m.turnEnds.mu.Lock()
 	queued := m.turnEnds.pending[orchestrator]
+	delete(m.turnEnds.pending, orchestrator)
 	m.turnEnds.mu.Unlock()
 	if len(queued) == 0 {
 		return
@@ -196,18 +206,25 @@ func (m *Manager) flushTurnEndNotices(ctx context.Context, orchestrator domain.S
 	if err != nil {
 		slog.Default().Warn("lifecycle: queued worker turn-end notices failed; kept for retry", "orchestrator", orchestrator, "count", len(queued), "err", err)
 	}
-	switch turnEndOutcome(outcome, err) {
-	case turnEndDelivered, turnEndDropped:
-		m.turnEnds.mu.Lock()
-		// Drop only what was flushed; a notice queued meanwhile stays.
-		remaining := m.turnEnds.pending[orchestrator][len(queued):]
-		if len(remaining) == 0 {
-			delete(m.turnEnds.pending, orchestrator)
-		} else {
-			m.turnEnds.pending[orchestrator] = append([]string(nil), remaining...)
-		}
-		m.turnEnds.mu.Unlock()
+	if turnEndOutcome(outcome, err) == turnEndRetry {
+		m.requeueTurnEndNotices(orchestrator, queued)
 	}
+}
+
+// requeueTurnEndNotices puts an undelivered batch back at the head of the
+// queue, ahead of anything that arrived while it was being written, so the
+// orchestrator still reads its workers in the order they finished.
+func (m *Manager) requeueTurnEndNotices(orchestrator domain.SessionID, batch []string) {
+	m.turnEnds.mu.Lock()
+	defer m.turnEnds.mu.Unlock()
+	if m.turnEnds.pending == nil {
+		m.turnEnds.pending = map[domain.SessionID][]string{}
+	}
+	later := m.turnEnds.pending[orchestrator]
+	restored := make([]string, 0, len(batch)+len(later))
+	restored = append(restored, batch...)
+	restored = append(restored, later...)
+	m.turnEnds.pending[orchestrator] = restored
 }
 
 type turnEndResult int
