@@ -4600,6 +4600,7 @@ export interface components {
                 [key: string]: string;
             };
             fallback?: components["schemas"]["DomainProfileFallback"];
+            interface?: string;
             quota?: components["schemas"]["DomainProfileQuota"];
             rulesFile?: string;
         };

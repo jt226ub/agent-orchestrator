@@ -12844,6 +12844,8 @@ components:
           type: object
         fallback:
           $ref: '#/components/schemas/DomainProfileFallback'
+        interface:
+          type: string
         quota:
           $ref: '#/components/schemas/DomainProfileQuota'
         rulesFile:

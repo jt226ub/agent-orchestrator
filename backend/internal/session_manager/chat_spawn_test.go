@@ -1560,3 +1560,49 @@ func TestChatSpawn_RollbackGivesEachCleanupStepAFreshDeadline(t *testing.T) {
 		t.Fatal("session row was not terminated after chat shutdown exhausted its deadline")
 	}
 }
+
+// A profile that names an interface decides it, ahead of the Chat preference an
+// orchestrator-spawned worker would otherwise inherit: that is how a claude-code
+// or omp worker gets a terminal on a harness that has a Chat driver. An explicit
+// --mode still beats the profile.
+func TestSpawn_ProfileInterfaceBeatsOrchestratorChatDefault(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		profileInterface domain.SessionMode
+		requested        domain.SessionMode
+		wantMode         domain.SessionMode
+		wantRuntimes     int
+	}{
+		{name: "profile asks for a terminal", profileInterface: domain.SessionModeTUI, wantMode: domain.SessionModeTUI, wantRuntimes: 1},
+		{name: "profile asks for chat", profileInterface: domain.SessionModeChat, wantMode: domain.SessionModeChat, wantRuntimes: 0},
+		{name: "profile silent keeps the orchestrator chat default", wantMode: domain.SessionModeChat, wantRuntimes: 0},
+		{name: "explicit mode beats the profile", profileInterface: domain.SessionModeTUI, requested: domain.SessionModeChat, wantMode: domain.SessionModeChat, wantRuntimes: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			mgr, store, runtime := newChatManager(launcher)
+			mgr.defaults = fixedSessionModeDefaults(domain.SessionModeTUI)
+			store.sessions["mer-0"] = domain.SessionRecord{ID: "mer-0", ProjectID: chatTestProject, Kind: domain.KindOrchestrator}
+			project := store.projects[string(chatTestProject)]
+			project.Config.Profiles = map[string]domain.RoleProfile{
+				"expert": {Harness: domain.HarnessCodex, Interface: tt.profileInterface},
+			}
+			project.Config.Worker = domain.RoleOverride{Profile: "expert"}
+			store.projects[string(chatTestProject)] = project
+
+			rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+				ProjectID: chatTestProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+				ParentSessionID: "mer-0", RequestedMode: tt.requested,
+			})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if rec.Mode != tt.wantMode {
+				t.Fatalf("mode = %q, want %q", rec.Mode, tt.wantMode)
+			}
+			if runtime.created != tt.wantRuntimes {
+				t.Fatalf("terminal runtimes created = %d, want %d", runtime.created, tt.wantRuntimes)
+			}
+		})
+	}
+}

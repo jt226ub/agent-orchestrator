@@ -887,6 +887,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// it must not be displaced by the parent orchestrator's conversation
 	// setting below. An explicit mode on the request still wins over both.
 	profilePermissions := project.Config.Profiles[cfg.Profile].AgentConfig.Permissions
+	// A profile's interface is the role's own decision, read before the fold for
+	// the same reason as its permissions: the orchestrator-spawned Chat
+	// preference below must not displace it.
+	profileInterface := project.Config.Profiles[cfg.Profile].Interface
 	if project.Config, err = project.Config.WithProfile(cfg.Kind, cfg.Profile); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
@@ -958,7 +962,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// if it is unavailable for this harness or installation, fall back to TUI.
 	modeExplicitlyRequested := cfg.RequestedMode.Valid()
 	requestedMode := cfg.RequestedMode
-	if !modeExplicitlyRequested && cfg.Kind == domain.KindWorker && cfg.ParentSessionID != "" &&
+	if !modeExplicitlyRequested && profileInterface.Valid() {
+		// The profile named an interface, which is the user's decision for this
+		// role: honour it ahead of the orchestrator-spawned Chat preference, so a
+		// profile can ask for a terminal on a harness that has a Chat driver.
+		requestedMode = profileInterface
+	}
+	if !modeExplicitlyRequested && !profileInterface.Valid() &&
+		cfg.Kind == domain.KindWorker && cfg.ParentSessionID != "" &&
 		m.chat != nil && m.chat.SupportsChat(cfg.Harness) {
 		// A worker an orchestrator spawns defaults to Chat when its harness has
 		// a Chat driver: only a Chat session can be steered mid-turn and takes a

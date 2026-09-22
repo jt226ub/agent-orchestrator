@@ -18,6 +18,10 @@ export type ProfileDraft = {
 	model: string;
 	permissions: string;
 	rulesFile: string;
+	// The session interface this role opens: "tui", "chat", or "" to leave the
+	// ordinary precedence alone. Named sessionInterface because interface is a
+	// TypeScript keyword.
+	sessionInterface: string;
 	env: string;
 	// Quota admission (agy profiles): percentages as typed, "" for unset.
 	warnBelowPercent: string;
@@ -27,7 +31,7 @@ export type ProfileDraft = {
 
 /** A blank profile draft with the given name, as the Add profile buttons create. */
 export function newProfileDraft(name: string): ProfileDraft {
-	return { key: newProfileKey(), name, agent: "", model: "", permissions: "", rulesFile: "", env: "", warnBelowPercent: "", refuseBelowPercent: "", fallbackProfile: "" };
+	return { key: newProfileKey(), name, agent: "", model: "", permissions: "", rulesFile: "", sessionInterface: "", env: "", warnBelowPercent: "", refuseBelowPercent: "", fallbackProfile: "" };
 }
 
 export function ProfileCard({
@@ -121,6 +125,18 @@ export function ProfileCard({
 					onChange={(event) => onChange({ rulesFile: event.target.value })}
 				/>
 			</SettingsRow>
+			<SettingsRow label={t("settings.project.profileInterface")} description={t("settings.project.profileInterfaceHint")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.project.profileInterfaceFor", { name })}
+					value={draft.sessionInterface || "__default__"}
+					options={[
+						{ value: "__default__", label: t("settings.project.profileInterfaceDefault") },
+						{ value: "tui", label: t("settings.project.profileInterfaceTui") },
+						{ value: "chat", label: t("settings.project.profileInterfaceChat") },
+					]}
+					onChange={(value) => onChange({ sessionInterface: value === "__default__" ? "" : value })}
+				/>
+			</SettingsRow>
 			<SettingsRow label={t("settings.project.profileEnv")} description={t("settings.project.profileEnvHint")}>
 				<textarea
 					aria-label={t("settings.project.profileEnvFor", { name })}
@@ -199,6 +215,7 @@ export function profileDraftsFromConfig(profiles: Record<string, RoleProfile> | 
 			model: profile.agentConfig?.model ?? "",
 			permissions: profile.agentConfig?.permissions ?? "",
 			rulesFile: profile.rulesFile ?? "",
+			sessionInterface: profile.interface ?? "",
 			env: Object.entries(profile.env ?? {})
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([k, v]) => `${k}=${v}`)
@@ -235,6 +252,7 @@ export function profilesFromDrafts(drafts: ProfileDraft[]): Record<string, RoleP
 		if (draft.agent) profile.agent = draft.agent as RoleProfile["agent"];
 		if (agentConfig) profile.agentConfig = agentConfig;
 		if (draft.rulesFile.trim()) profile.rulesFile = draft.rulesFile.trim();
+		if (draft.sessionInterface) profile.interface = draft.sessionInterface;
 		const env = parseEnvLines(draft.env);
 		if (env) profile.env = env;
 		const warn = draft.warnBelowPercent.trim();
