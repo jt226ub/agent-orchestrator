@@ -25,6 +25,7 @@ const UpdatesSection = lazy(async () => {
 
 type CatalogContext = {
 	cloudEnabled: boolean;
+	focusAgentId?: string;
 };
 
 export type SettingsCatalogItem = {
@@ -32,7 +33,7 @@ export type SettingsCatalogItem = {
 	icon: LucideIcon;
 	label: (t: TFunction) => string;
 	visible?: (context: CatalogContext) => boolean;
-	render: (t: TFunction, titleHidden: boolean) => ReactNode;
+	render: (t: TFunction, titleHidden: boolean, context: CatalogContext) => ReactNode;
 };
 
 function SettingsContentPanel({ children }: { children: ReactNode }) {
@@ -50,7 +51,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		id: "harness",
 		icon: Bot,
 		label: (t) => t("settings.harness"),
-		render: (_t, titleHidden) => <HarnessSettingsSection titleHidden={titleHidden} />,
+		render: (_t, titleHidden, { focusAgentId }) => <HarnessSettingsSection focusAgentId={focusAgentId} titleHidden={titleHidden} />,
 	},
 	{
 		id: "agents",

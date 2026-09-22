@@ -15,9 +15,11 @@ import { TooltipProvider } from "./ui/tooltip";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
+import { sessionInterfaceTransitionQueryKey } from "../hooks/useSessionInterfaceTransition";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { useUiStore } from "../stores/ui-store";
+import { sessionInterfaceTransitionStatus } from "../test/interface-transition-fixtures";
 import type {
   PRState,
   PullRequestFacts,
@@ -278,7 +280,7 @@ beforeEach(() => {
   navigateMock.mockReset();
   patchMock.mockReset();
   postMock.mockReset();
-  useUiStore.setState({ developerMode: false, inspectorSessions: {} });
+  useUiStore.setState({ developerMode: false, inspectorSessions: {}, settingsModal: null });
   putMock.mockReset();
   mockCommonGets();
   patchMock.mockResolvedValue({
@@ -1212,7 +1214,7 @@ describe("SessionInspector completion controls", () => {
       <SessionInspector
         session={session([], {
           workspaceId: STANDALONE_WORKSPACE_ID,
-          workspaceName: "Ad hoc agents",
+          workspaceName: "Scratchpad",
           status: "idle",
         })}
       />,
@@ -1305,12 +1307,11 @@ describe("SessionInspector completion controls", () => {
 });
 
 describe("SessionInspector Activity section", () => {
-  const activitySection = () =>
-    within(
-      screen
-        .getByText("Activity")
-        .closest("[data-testid='inspector-section']") as HTMLElement,
-    );
+  const activitySectionElement = () =>
+    screen
+      .getByText("Activity")
+      .closest("[data-testid='inspector-section']") as HTMLElement;
+  const activitySection = () => within(activitySectionElement());
 
   it("offers a managed resume only for an exited, nonterminated agent", async () => {
     renderWithQuery(
@@ -1349,6 +1350,9 @@ describe("SessionInspector Activity section", () => {
     expect(
       screen.queryByRole("button", { name: "Resume agent" }),
     ).not.toBeInTheDocument();
+    expect(
+      activitySectionElement().querySelector(".mt-3.border-t.pt-3"),
+    ).not.toBeInTheDocument();
 
     live.unmount();
     renderWithQuery(
@@ -1384,6 +1388,31 @@ describe("SessionInspector Activity section", () => {
 
     expect(
       screen.queryByRole("button", { name: "Resume agent" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not offer agent resume during an interface transition", () => {
+    renderWithQuery(
+      <SessionInspector
+        session={session([], {
+          status: "exited",
+          activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+        })}
+      />,
+      undefined,
+      (client) => {
+        client.setQueryData(
+          sessionInterfaceTransitionQueryKey("sess-1"),
+          sessionInterfaceTransitionStatus("sess-1"),
+        );
+      },
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Resume agent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      activitySectionElement().querySelector(".mt-3.border-t.pt-3"),
     ).not.toBeInTheDocument();
   });
 
@@ -1624,6 +1653,12 @@ describe("SessionInspector Activity section", () => {
       );
     }
   });
+
+	it("keeps execution context out of the summary", () => {
+		renderWithQuery(<SessionInspector session={session([], { branch: "feature/session" })} />);
+
+		expect(screen.queryByTestId("execution-context")).not.toBeInTheDocument();
+	});
 
   it("keeps workspace, PR, and SCM context rows in the Activity timeline", () => {
     renderWithQuery(
@@ -2024,6 +2059,35 @@ describe("SessionInspector summary reviews", () => {
     });
     expect(trigger).toHaveTextContent("Claude Code");
     expect(trigger).not.toHaveTextContent("claude-code");
+  });
+
+  it("opens Harness from the reviewer menu for its unavailable selection", async () => {
+    const responder = commonGetsResponder();
+    getMock.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/agents/readiness") {
+        return {
+          data: {
+            agents: [
+              agentReadiness("claude-code", "Claude Code"),
+              agentReadiness("codex", "Codex", { authentication: "unauthorized" }),
+            ],
+          },
+        };
+      }
+      return responder(path);
+    });
+
+    renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+    await openReviewsSection();
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Manage agents…" }));
+    await waitFor(() => expect(useUiStore.getState().settingsModal).not.toBeNull());
+
+    expect(useUiStore.getState().settingsModal).toEqual({
+      scope: "global",
+      section: "harness",
+      focusAgentId: "codex",
+    });
   });
 
   it("configures session auto-review and disables manual controls", async () => {

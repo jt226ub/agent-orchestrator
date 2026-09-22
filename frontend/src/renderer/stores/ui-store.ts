@@ -1,5 +1,7 @@
 import { create } from "zustand";
+import { aoBridge } from "../lib/bridge";
 import type { TerminalTarget } from "../types/terminal";
+import type { FilesSource } from "../hooks/useSessionWorkspaceFiles";
 import {
 	applyDocumentTheme,
 	applyDocumentThemeStyle,
@@ -31,7 +33,13 @@ export type GlobalSettingsSection =
 	| "help";
 
 export type SettingsModal =
-	| { scope: "global"; section?: GlobalSettingsSection }
+	| {
+			scope: "global";
+			section?: GlobalSettingsSection;
+			focusAgentId?: string;
+			/** Preserve the project form while global recovery settings is above it. */
+			returnTo?: Extract<SettingsModal, { scope: "project" }>;
+	}
 	| {
 			scope: "project";
 			projectId: string;
@@ -50,6 +58,8 @@ export type InspectorSessionState = {
 	browserUnseen?: boolean;
 	/** Files tab: review changed files directly. Defaults to true; false shows the full tree. */
 	filesChangedOnly?: boolean;
+	/** Files tab: source shared by the docked and maximized explorers. */
+	filesSource?: FilesSource;
 	/** The session-entry defaulting (Summary tab, baseline browser reveal) has already run once for this session's lifetime. */
 	initialized?: boolean;
 };
@@ -128,7 +138,7 @@ export type UiState = {
 	updateInstallPromptOpen: boolean;
 	openUpdateInstallPrompt: () => void;
 	closeUpdateInstallPrompt: () => void;
-	openGlobalSettings: (section?: GlobalSettingsSection) => void;
+	openGlobalSettings: (section?: GlobalSettingsSection, options?: { focusAgentId?: string; preserveProject?: boolean }) => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
@@ -148,6 +158,7 @@ export type UiState = {
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setFilesChangedOnly: (sessionId: string, changedOnly: boolean) => void;
+	setFilesSource: (sessionId: string, source: FilesSource) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setProjectProvisioning: (projectId: string, provisioning: boolean) => void;
@@ -169,6 +180,7 @@ export type OrchestratorReplacementFailure = {
 	message: string;
 	code?: string;
 	requestId?: string;
+	details?: Record<string, unknown>;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -186,6 +198,11 @@ function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
+function syncDeveloperModeToUpdater(enabled: boolean): void {
+	const request = aoBridge.updateSettings?.setMacDifferentialUpdates?.(enabled);
+	void request?.catch(() => undefined);
+}
+
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
@@ -201,6 +218,7 @@ export function sidebarOccupiesLayout(state: Pick<UiState, "isSidebarOpen">): bo
 
 const initialThemePreference = readStoredThemePreference();
 const initialThemeStyle = readStoredThemeStyle();
+const initialDeveloperModeValue = initialDeveloperMode();
 
 export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
@@ -211,7 +229,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
-	developerMode: initialDeveloperMode(),
+	developerMode: initialDeveloperModeValue,
 	restartingProjectIds: new Set<string>(),
 	provisioningProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -246,13 +264,27 @@ export const useUiStore = create<UiState>((set, get) => ({
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
+		syncDeveloperModeToUpdater(developerMode);
 	},
 	updateInstallPromptOpen: false,
 	openUpdateInstallPrompt: () => set({ updateInstallPromptOpen: true }),
 	closeUpdateInstallPrompt: () => set({ updateInstallPromptOpen: false }),
-	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
+	openGlobalSettings: (section, options) => set((state) => ({
+		settingsModal: {
+			scope: "global",
+			section,
+			...(options?.focusAgentId ? { focusAgentId: options.focusAgentId } : {}),
+			...(options?.preserveProject && state.settingsModal?.scope === "project"
+				? { returnTo: state.settingsModal }
+				: options?.preserveProject && state.settingsModal?.scope === "global" && state.settingsModal.returnTo
+					? { returnTo: state.settingsModal.returnTo }
+					: {}),
+		},
+	})),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
-	closeSettings: () => set({ settingsModal: null }),
+	closeSettings: () => set((state) => ({
+		settingsModal: state.settingsModal?.scope === "global" ? state.settingsModal.returnTo ?? null : null,
+	})),
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();
 		if (themePreference !== "system") return;
@@ -357,6 +389,16 @@ export const useUiStore = create<UiState>((set, get) => ({
 				},
 			};
 		}),
+	setFilesSource: (sessionId, filesSource) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, filesSource },
+				},
+			};
+		}),
 	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
 	setProjectRestarting: (projectId, restarting) =>
 		set((state) => {
@@ -445,6 +487,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 			return { visibleTerminalKindBySession };
 		}),
 }));
+
+// Hydration synchronizes legacy renderer-only Developer Mode state into the
+// main-process updater mirror. Until this completes, the updater is fail-closed.
+syncDeveloperModeToUpdater(initialDeveloperModeValue);
 
 export function useResolvedTheme(): Theme {
 	return useUiStore((state) => state.resolvedTheme);

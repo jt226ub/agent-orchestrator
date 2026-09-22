@@ -30,7 +30,9 @@ import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import { cloudProjectsQueryKey, cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import { useCloudCp } from "../hooks/useCloudCp";
+import { useCloudOrg } from "../hooks/useCloudOrg";
 import { apiClient, apiErrorCode, apiErrorDetails, apiErrorMessage, apiErrorRequestId, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
@@ -52,7 +54,7 @@ import {
 } from "../lib/platform";
 import { sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
-import { sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { CLOUD_PROJECT_KIND, sessionIsActive, STANDALONE_WORKSPACE_ID, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
@@ -173,6 +175,8 @@ function ShellLayout() {
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
+	const { client: cloudClient } = useCloudCp();
+	const { org: cloudOrg } = useCloudOrg();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	// Global shortcut listeners need the latest workspace list, but recreating
@@ -652,6 +656,49 @@ function ShellLayout() {
 				surface: "project_board",
 				project_id: projectId,
 			});
+			// Cloud projects live in the control plane, not the local daemon: route
+			// their delete to the CP (which archives the project and all its
+			// sessions) instead of the local project endpoint.
+			const isCloudProject =
+				workspaces.find((item) => item.id === projectId)?.kind === CLOUD_PROJECT_KIND;
+			if (isCloudProject) {
+				if (!cloudOrg?.id) {
+					const failure = new Error("The cloud control plane is not ready. Sign in and try again.") as Error & {
+						code?: string;
+					};
+					failure.code = "cloud_not_ready";
+					void captureRendererException(failure, {
+						source: "project-remove",
+						operation: "project_remove",
+						surface: "project_board",
+						project_id: projectId,
+					});
+					throw failure;
+				}
+				try {
+					await cloudClient.deleteProject(cloudOrg.id, projectId);
+				} catch (error) {
+					const failure = new Error(
+						error instanceof Error ? error.message : "Unable to delete cloud project",
+					) as Error & { code?: string };
+					void captureRendererException(failure, {
+						source: "project-remove",
+						operation: "project_remove",
+						surface: "project_board",
+						project_id: projectId,
+					});
+					throw failure;
+				}
+				void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
+				// The archive is asynchronous (202); refresh the cloud queries so the
+				// merged board drops the project and its sessions on the next fetch.
+				await queryClient.invalidateQueries({ queryKey: cloudProjectsQueryKey });
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				if (isLastWorkspace) {
+					void navigate({ to: "/" });
+				}
+				return;
+			}
 			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
@@ -672,11 +719,11 @@ function ShellLayout() {
               void navigate({ to: "/" });
 }
 		},
-		[navigate, updateWorkspaces, workspaces],
+		[cloudClient, cloudOrg?.id, navigate, queryClient, updateWorkspaces, workspaces],
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string, mode?: "chat" | "tui") => {
+		async (projectId: string, mode?: "chat" | "tui", approvalMode?: "bypass-permissions") => {
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
@@ -684,6 +731,7 @@ function ShellLayout() {
 				setProjectRestarting,
 				setOrchestratorReplacementError,
 				mode,
+				approvalMode,
 				onError: (error) => {
 					captureOrchestratorReplacementFailure(error, projectId);
 				},
@@ -1090,6 +1138,9 @@ function ShellLayout() {
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
 					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
+					onRetryWithoutApprovals={(projectId) =>
+						void restartOrchestrator(projectId, undefined, "bypass-permissions")
+					}
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
+	MAX_PROJECT_DISPLAY_NAME_LEN,
 	ProjectAgentsSettingsView,
 	ProjectGeneralSettingsView,
 	ProjectSettingsFormView,
@@ -321,7 +322,7 @@ function SettingsBody({
 						message:
 							error instanceof Error ? error.message : t("settings.project.replaceOrchestratorFailed"),
 						...(error instanceof OrchestratorSpawnError
-							? { code: error.code, requestId: error.requestId }
+							? { code: error.code, requestId: error.requestId, details: error.details }
 							: {}),
 					};
 					return {
@@ -424,7 +425,10 @@ function SettingsBody({
 				setReplacementError(null);
 				const validation = validateProjectSettings(
 					{ ...form, workerAgent: effectiveWorkerAgent, orchestratorAgent: effectiveOrchestratorAgent },
-					{ validateIntake: !isScratchProject },
+					{
+						validateIntake: !isScratchProject,
+						originalDisplayName: project.name,
+					},
 				);
 				if (validation) {
 					setValidationError(
@@ -432,7 +436,9 @@ function SettingsBody({
 							? t("settings.project.agentsRequired")
 							: validation === "name_required"
 								? t("settings.project.nameRequired")
-								: t("settings.project.intakeAssigneeRequired"),
+								: validation === "name_too_long"
+									? t("settings.project.nameTooLong", { max: MAX_PROJECT_DISPLAY_NAME_LEN })
+									: t("settings.project.intakeAssigneeRequired"),
 					);
 					return;
 				}
