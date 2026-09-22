@@ -78,6 +78,14 @@ var (
 	// ErrChatCapabilityUnavailable means an explicit tuning value was requested
 	// but the provider did not advertise the matching live capability.
 	ErrChatCapabilityUnavailable = errors.New("chat model capability unavailable")
+	// ErrChatHistoryLoadFailed means one provider transcript load did not
+	// produce a replay: the ACP session/load answered with a provider-side
+	// failure (JSON-RPC -32603 "Internal error"), or a single load attempt ran
+	// past AO's per-attempt bound while the overall settle budget still had
+	// time left. Neither is an unsettled AO checkpoint, so callers must stop
+	// re-sending the same load and report the failure instead of spending the
+	// rest of the budget on it.
+	ErrChatHistoryLoadFailed = errors.New("chat conversation history load failed")
 )
 
 // ChatHistoryMismatchDimension identifies the exact durable checkpoint fact a
@@ -291,6 +299,9 @@ type ChatStartConfig struct {
 	// Permissions is AO's existing per-session approval policy. Drivers map it
 	// onto their provider's native approval and sandbox settings.
 	Permissions PermissionMode
+	// ReadOnly requires a provider-enforced sandbox that cannot modify the
+	// workspace. It is used for review-owned conversations.
+	ReadOnly bool
 	// SystemPrompt carries AO's standing instructions for the session.
 	SystemPrompt string
 	// ProviderScopeID identifies the AO ownership boundary for opaque provider
@@ -324,6 +335,7 @@ type ChatResumeConfig struct {
 	// Effort is optional; empty keeps the provider conversation's current effort.
 	Effort      string
 	Permissions PermissionMode
+	ReadOnly    bool
 	// SystemPrompt is recomputed by the session manager on restore and reapplied
 	// to the provider process. It is not persisted in the conversation transcript.
 	SystemPrompt string

@@ -95,6 +95,30 @@ standing rules are layered contract → role file → project rules → profile 
 plan. `deepseek-expert` needs `ANTHROPIC_AUTH_TOKEN` added to its environment before it can
 run; the key is deliberately not stored by the tooling.
 
+**Upgrading a database made before the 2026-09-22 upstream merge.** Upstream has since
+shipped its own `0148` (notification dismissal) and `0149` (reviewer chat conversations), so
+this fork's migrations moved to `0151`-`0153`, above every version upstream has used. goose
+keys on the version number alone, so a database that still records 148, 149 and 150 against
+the fork's old migrations would skip both of upstream's -- and 0149 rebuilds the
+`conversations` table, so skipping it leaves the schema behind the code.
+
+Correct the ledger rather than hand-applying upstream's SQL, and let goose do the work; AO
+runs goose with `WithAllowMissing`, so it applies 148 and 149 even though 151-153 are already
+recorded above them. Quit the app, keep a copy of `ao.db`, then:
+
+```sql
+BEGIN;
+DELETE FROM goose_db_version WHERE version_id IN (148, 149, 150);
+INSERT INTO goose_db_version (version_id, is_applied) VALUES (151, 1), (152, 1), (153, 1);
+COMMIT;
+```
+
+Start the app: goose applies upstream's 0148 and 0149 itself. A database created after the
+merge needs none of this. Verified on a copy of the real `~/.ao/data/ao.db`: the daemon
+reaches `readyz`, both upstream migrations apply, this fork's columns and
+`agy_account_switches` survive, the conversations rebuild keeps its rows (1,443 messages), and
+`PRAGMA foreign_key_check` and `integrity_check` come back clean.
+
 **To rebuild after a change.** Two quirks of this machine first: with Node 26 the
 packager's `extract-zip` exits silently mid-extraction (no bundle, exit 0), so the
 Electron packaging step runs under the Node 22 that `build:acp-runtime` downloads; and the

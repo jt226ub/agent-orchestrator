@@ -202,6 +202,12 @@ type RoleProfile struct {
 	// standing rules after the project's own, so the role's instructions are
 	// the most specific text the agent reads.
 	RulesFile string `json:"rulesFile,omitempty"`
+	// Interface is the session interface a session on this profile opens: "tui"
+	// for a terminal or "chat" for the chat UI. It is the role's own decision
+	// and beats the orchestrator-spawned Chat preference, so a profile can ask
+	// for a screen on a harness that has a Chat driver. Empty leaves the
+	// ordinary precedence alone (an explicit --mode, then the daemon default).
+	Interface SessionMode `json:"interface,omitempty"`
 	// Env are extra environment variables for sessions on this profile; a key
 	// set here wins over the project's Env, and AO-internal vars still win over both.
 	Env map[string]string `json:"env,omitempty"`
@@ -528,6 +534,9 @@ func validateProfiles(profiles map[string]RoleProfile) error {
 		}
 		if err := validateRepoRelative(profile.RulesFile); err != nil {
 			return fmt.Errorf("profiles.%s.rulesFile %q: %w", name, profile.RulesFile, err)
+		}
+		if profile.Interface != "" && !profile.Interface.Valid() {
+			return fmt.Errorf("profiles.%s.interface: unknown session interface %q", name, profile.Interface)
 		}
 		if q := profile.Quota; q != nil {
 			for field, value := range map[string]float64{"warnBelowPercent": q.WarnBelowPercent, "refuseBelowPercent": q.RefuseBelowPercent} {

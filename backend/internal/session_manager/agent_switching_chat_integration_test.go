@@ -52,7 +52,7 @@ func (l integrationChatLauncher) StartChatTurn(ctx context.Context, id domain.Se
 	return l.service.StartChatTurn(ctx, id, text)
 }
 
-func (l integrationChatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+func (l integrationChatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (domain.ConversationTurn, error) {
 	return l.service.RelayChatTurn(ctx, id, text)
 }
 
@@ -60,7 +60,7 @@ func (l integrationChatLauncher) RelayChatTurnWithID(
 	ctx context.Context,
 	id domain.SessionID,
 	text, clientMessageID string,
-) (string, error) {
+) (domain.ConversationTurn, error) {
 	return l.service.RelayChatTurnWithID(ctx, id, text, clientMessageID)
 }
 

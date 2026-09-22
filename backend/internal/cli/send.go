@@ -27,6 +27,13 @@ type sendAPIRequest struct {
 	Message string `json:"message"`
 }
 
+// sendAPIResponse carries the daemon's delivery receipt. A Chat session records
+// a message durably and dispatches it when the running turn ends, so acceptance
+// is not delivery and a caller that is not watching a screen has to be told.
+type sendAPIResponse struct {
+	Delivery string `json:"delivery"`
+}
+
 // The steering DTOs mirror the daemon conversation API without coupling the
 // thin CLI to the HTTP controller package.
 type conversationMessageAPIRequest struct {
@@ -88,7 +95,16 @@ func (c *commandContext) sendMessage(ctx context.Context, opts sendOptions) erro
 	// from sanitized issue refs; keep the URL well-formed regardless.
 	path := "sessions/" + url.PathEscape(session)
 	if !opts.steer {
-		return c.postJSON(ctx, path+"/send", sendAPIRequest{Message: message}, nil)
+		var result sendAPIResponse
+		if err := c.postJSON(ctx, path+"/send", sendAPIRequest{Message: message}, &result); err != nil {
+			return err
+		}
+		if result.Delivery == "queued" {
+			_, _ = fmt.Fprintf(c.deps.Out,
+				"Message recorded for %s but not delivered yet: it is queued behind a turn that is still running, and dispatches when that turn ends. Steer the active turn instead with: ao send --session %s --steer --message \"...\"\n",
+				session, session)
+		}
+		return nil
 	}
 	return c.steerMessage(ctx, path, message, strings.TrimSpace(opts.clientMessageID), opts.recoverOnly)
 }

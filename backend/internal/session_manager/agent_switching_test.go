@@ -1042,7 +1042,7 @@ func TestSwitchAgentReturnsAfterDurableAdmission(t *testing.T) {
 	if err != nil || !found || active.ID != sw.ID {
 		t.Fatalf("durable active switch = (%+v, %v, %v), want id %q", active, found, err, sw.ID)
 	}
-	if err := manager.Send(context.Background(), "proj-1", "must remain fenced", nil); !errors.Is(err, ErrSwitchInProgress) {
+	if _, err := manager.Send(context.Background(), "proj-1", "must remain fenced", nil); !errors.Is(err, ErrSwitchInProgress) {
 		t.Fatalf("ordinary session input error = %v, want ErrSwitchInProgress", err)
 	}
 
@@ -3388,7 +3388,7 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("terminal input gate opened during replacement")
 	}
-	if err := manager.Send(context.Background(), "proj-1", "do not race", nil); !errors.Is(err, ErrSwitchInProgress) {
+	if _, err := manager.Send(context.Background(), "proj-1", "do not race", nil); !errors.Is(err, ErrSwitchInProgress) {
 		t.Fatalf("Send error = %v, want ErrSwitchInProgress", err)
 	}
 	close(runtime.release)

@@ -68,6 +68,21 @@ type ClaimOutcome struct {
 	OwnerTerminated bool
 }
 
+// SendDelivery reports what became of a message handed to a session, so a
+// caller that is not a person watching a screen can tell delivery from
+// acceptance. A Chat session records a message durably before dispatching it,
+// and holds it behind a turn that is still running; without this a relay had no
+// way to know its message was still waiting.
+type SendDelivery string
+
+const (
+	// SendDeliveryDispatched means the message reached the agent.
+	SendDeliveryDispatched SendDelivery = "dispatched"
+	// SendDeliveryQueued means the message is recorded behind a running turn and
+	// dispatches when that turn ends. It has not reached the agent yet.
+	SendDeliveryQueued SendDelivery = "queued"
+)
+
 // AgentMessenger injects a message into a running agent. An empty message
 // sends only the submit keystroke (Enter) — callers use it to nudge a pasted
 // prompt that was not submitted; every runtime must honor this contract.

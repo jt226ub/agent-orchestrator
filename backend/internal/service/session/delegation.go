@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	delegatedTaskTitleLimit             = 20
+	delegatedTaskTitleLimit             = maxDisplayNameLen
 	delegatedTaskUntitledName           = "Untitled task"
 	delegatedTaskTitleRefinementTimeout = time.Minute
 )
@@ -132,7 +132,7 @@ func (s *Service) refineDelegatedTaskTitle(ctx context.Context, workerID domain.
 	if err := s.manager.WaitForMessageDeliveryReady(ctx, orchestratorID); err != nil {
 		return fmt.Errorf("wait for title orchestrator %s: %w", orchestratorID, err)
 	}
-	if err := s.manager.Send(ctx, orchestratorID, taskTitleDelegationMessage(workerID, in), nil); err != nil {
+	if _, err := s.manager.Send(ctx, orchestratorID, taskTitleDelegationMessage(workerID, in), nil); err != nil {
 		return fmt.Errorf("send title request to %s: %w", orchestratorID, err)
 	}
 	return nil
@@ -168,7 +168,7 @@ func (s *Service) taskTitleOrchestrator(ctx context.Context, projectID domain.Pr
 	}
 	unlock()
 
-	orchestrator, err := s.SpawnOrchestrator(ctx, projectID, false, "")
+	orchestrator, err := s.SpawnOrchestrator(ctx, projectID, false, "", "")
 	if err != nil {
 		return "", fmt.Errorf("start project orchestrator: %w", err)
 	}
@@ -193,7 +193,7 @@ func taskTitleDelegationMessage(workerID domain.SessionID, in DelegateTaskInput)
 	b.WriteString("Choose a concise task title from the brief and run:\n\n")
 	b.WriteString("ao session rename ")
 	b.WriteString(string(workerID))
-	b.WriteString(" \"<title, max 20 chars>\"\n\n")
+	b.WriteString(" \"<title, max 100 chars>\"\n\n")
 	b.WriteString("Worker session id: ")
 	b.WriteString(string(workerID))
 	b.WriteString("\nTask brief:\n")
