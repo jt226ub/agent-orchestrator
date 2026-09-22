@@ -71,6 +71,13 @@ the app bundles) is at `~/.local/bin/ao`. The build is unsigned; it runs because
 built locally, not downloaded. Auto-update stays off (`~/.ao/update-settings.json`), so
 nothing replaces the build behind the user's back.
 
+**Logs.** The daemon writes its log to `~/.ao/data/logs/daemon.log` (32 MiB, one previous file
+kept as `daemon.log.1`) as well as stderr, so a session that stops responding can be explained
+after the fact. Known failure seen 2026-09-22: a chat-mode orchestrator's controller stopped
+taking writes (send, interrupt and kill all hung; reads worked) after a chat→terminal switch
+was attempted and cancelled. Recovery: quit the app, kill that session's `ao chat-host`
+process, relaunch; the daemon resumes the same conversation on a fresh host.
+
 **Data.** The app uses the default data dir `~/.ao/data`: `ao.db`, worktrees, prompts, and
 the daemon-wide texts the fork adds — `rules/contract.md` (the Drive contract),
 `rules/orchestrator.md` and `rules/worker.md` (the role layers), `rules/<profile>.md`, and

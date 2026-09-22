@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -180,7 +181,12 @@ func Run() error {
 	}
 	ignoreBrokenPipeSignal()
 
-	log := newLogger()
+	logWriter, logCloser := daemonLogWriter(cfg.DataDir)
+	if logCloser != nil {
+		defer func() { _ = logCloser.Close() }()
+	}
+	log := newLogger(logWriter)
+	log.Info("daemon: logging to", "file", filepath.Join(cfg.DataDir, daemonLogDir, daemonLogName))
 	var browserRuntimeToken string
 	if os.Getenv(browserruntime.RuntimeTokenStdinEnv) == "1" {
 		browserRuntimeToken, err = browserruntime.ReadRuntimeToken(os.Stdin)
@@ -1019,10 +1025,11 @@ func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
 	}
 }
 
-// newLogger returns the daemon's slog logger. It writes to stderr so supervisors
-// can capture it separately from any structured stdout protocol added later.
-func newLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+// newLogger returns the daemon's slog logger over w: stderr, so supervisors
+// can capture it separately from any structured stdout protocol added later,
+// plus the rotating daemon.log under the data dir (see daemonLogWriter).
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
 func stabilizeWorkingDirectory(dataDir string) error {
