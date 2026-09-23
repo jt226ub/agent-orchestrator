@@ -289,3 +289,13 @@ func turnEndOutcome(outcome sessionguard.Outcome, err error) turnEndResult {
 		return turnEndRetry
 	}
 }
+
+// NotifyOrchestrator delivers an AO-authored notice to an orchestrator the same
+// way a worker's turn-end notice travels: detached from the caller, written now
+// if the orchestrator can take it, otherwise queued for its next idle.
+func (m *Manager) NotifyOrchestrator(ctx context.Context, orchestrator domain.SessionID, notice string) {
+	if m.guard == nil || orchestrator == "" || strings.TrimSpace(notice) == "" {
+		return
+	}
+	m.goTurnEnd(ctx, func(ctx context.Context) { m.deliverTurnEndNotice(ctx, orchestrator, notice) })
+}
