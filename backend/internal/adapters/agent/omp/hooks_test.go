@@ -225,6 +225,7 @@ func writeExecutableOMPExtension(t *testing.T, dir, source string) string {
 		`function callHookSync(hookName: string, payload: Record<string, unknown>)`, `function callHookSync(hookName, payload)`,
 		`function sessionID(ctx: any): string`, `function sessionID(ctx)`,
 		`function isRootSession(ctx: any): boolean`, `function isRootSession(ctx)`,
+		`function finalStopReason(event: any): string | undefined`, `function finalStopReason(event)`,
 		`export default function (omp: ExtensionAPI)`, `export default function (omp)`,
 	).Replace(source)
 	writeOMPFixtureFile(t, modulePath, source, 0o600)
@@ -277,4 +278,87 @@ func envWithoutOMPPath(env []string) []string {
 		}
 	}
 	return out
+}
+
+// The Stop callback carries the stopReason of the run's final assistant
+// message, so AO can tell a run that finished from one OMP parked behind its
+// "Retry" prompt. The final message is searched for, not assumed to be last: an
+// aborted tool call can leave a toolResult after it.
+func TestManagedExtensionReportsFinalStopReason(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ao executable fixture uses a Unix shebang")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the OMP extension fixture")
+	}
+
+	fixtureDir := t.TempDir()
+	source := strings.Replace(ompActivityExtensionSource(), "const HOOK_TIMEOUT_MS = 1_250;", "const HOOK_TIMEOUT_MS = 10_000;", 1)
+	modulePath := writeExecutableOMPExtension(t, fixtureDir, source)
+	capturePath := filepath.Join(fixtureDir, "calls.jsonl")
+	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), `#!/bin/sh
+{
+  printf '%s\n' "$1"
+  printf '%s\n' "$2"
+  printf '%s\n' "$3"
+  IFS= read -r input
+  printf '%s\n' "$input"
+} >> "$AO_TEST_CAPTURE"
+exit 0
+`, 0o755)
+	harnessPath := filepath.Join(fixtureDir, "harness.mjs")
+	writeOMPFixtureFile(t, harnessPath, `import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const loaded = await import(pathToFileURL(process.argv[2]).href);
+loaded.default({ on(name, handler) { handlers.set(name, handler); } });
+const ctx = { hasUI: true, sessionManager: { getSessionId() { return "omp-native-1"; } } };
+const user = { role: "user", content: "edit it" };
+for (const event of [
+  { willContinue: false, messages: [user, { role: "assistant", stopReason: "stop", content: [] }] },
+  { willContinue: false, messages: [user, { role: "assistant", stopReason: "aborted", content: [{ type: "toolCall" }] },
+                                     { role: "toolResult", isError: true }] },
+  { willContinue: false, messages: [user, { role: "assistant", stopReason: "error", content: [] }] },
+  { willContinue: false, messages: [user] },
+  { willContinue: false },
+  { willContinue: true, messages: [user, { role: "assistant", stopReason: "error", content: [] }] },
+]) {
+  await handlers.get("agent_end")(event, ctx);
+}
+`, 0o600)
+
+	cmd := exec.CommandContext(context.Background(), node, harnessPath, modulePath)
+	cmd.Env = append(os.Environ(),
+		"PATH="+fixtureDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"AO_TEST_CAPTURE="+capturePath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("extension harness failed: %v\n%s", err, output)
+	}
+
+	calls := readOMPHookCalls(t, capturePath)
+	// The willContinue run sends nothing: the agent is carrying on by itself.
+	want := []string{"stop", "aborted", "error", "", ""}
+	if len(calls) != len(want) {
+		t.Fatalf("hook calls = %#v, want %d stops", calls, len(want))
+	}
+	for i, reason := range want {
+		if !reflect.DeepEqual(calls[i].Args, []string{"hooks", "omp", "stop"}) {
+			t.Fatalf("call %d args = %#v, want hooks/omp/stop", i, calls[i].Args)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(calls[i].Input)), &payload); err != nil {
+			t.Fatalf("call %d payload is not JSON: %v", i, err)
+		}
+		got, present := payload["stop_reason"]
+		if reason == "" {
+			if present {
+				t.Fatalf("call %d stop_reason = %#v, want it omitted when no assistant message ended the run", i, got)
+			}
+			continue
+		}
+		if got != reason {
+			t.Fatalf("call %d stop_reason = %#v, want %q", i, got, reason)
+		}
+	}
 }
