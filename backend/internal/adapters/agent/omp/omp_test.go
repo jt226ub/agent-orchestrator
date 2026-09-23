@@ -373,3 +373,32 @@ func fakeOMPVersionBinary(t *testing.T, version string) string {
 	}
 	return path
 }
+
+// A run that ends on an error or an abort does not end the work: OMP parks it
+// behind a "Retry" prompt and waits for a person (an edit whose match was not
+// unique aborted its streaming preview and sat there for minutes). Reporting
+// idle told the orchestrator the worker had finished its turn. The managed
+// extension passes the final assistant message's stopReason with Stop; a
+// payload without it -- an extension written by an older AO -- keeps the
+// historical Stop -> idle mapping.
+func TestDeriveActivityStateStopReason(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		payload string
+		want    domain.ActivityState
+	}{
+		{"error waits for a person", `{"session_id":"s","stop_reason":"error"}`, domain.ActivityWaitingInput},
+		{"abort waits for a person", `{"session_id":"s","stop_reason":"aborted"}`, domain.ActivityWaitingInput},
+		{"normal end is idle", `{"session_id":"s","stop_reason":"stop"}`, domain.ActivityIdle},
+		{"budget stop is idle", `{"session_id":"s","stop_reason":"length"}`, domain.ActivityIdle},
+		{"older extension without the field", `{"session_id":"s"}`, domain.ActivityIdle},
+		{"unreadable payload", `not json`, domain.ActivityIdle},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := DeriveActivityState("stop", []byte(tt.payload))
+			if !ok || got != tt.want {
+				t.Fatalf("DeriveActivityState(stop, %s) = (%q, %v), want (%q, true)", tt.payload, got, ok, tt.want)
+			}
+		})
+	}
+}

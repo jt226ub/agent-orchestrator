@@ -67,6 +67,38 @@ func turnEndNotice(worker domain.SessionRecord, at time.Time) string {
 	return b.String()
 }
 
+// workerAwaitsInput reports a worker that stopped mid-task to wait for a
+// person: active to waiting_input, on a live worker an orchestrator spawned. A
+// run that ended on an error parks behind the harness's own retry prompt (OMP's
+// "F5 to Retry"); reporting that as a finished turn misled orchestrators, and
+// saying nothing would leave them unaware. Blocked is left out: it is a
+// permission dialog that refuses `ao send`, so the notice's advice would be
+// wrong there.
+func workerAwaitsInput(prev domain.ActivityState, next domain.SessionRecord) bool {
+	return prev == domain.ActivityActive &&
+		next.Activity.State == domain.ActivityWaitingInput &&
+		next.Kind == domain.KindWorker &&
+		next.ParentSessionID != "" &&
+		!next.IsTerminated
+}
+
+// awaitingInputNotice tells an orchestrator its worker stopped and is waiting,
+// and to read the screen before sending anything: the wait may be an error to
+// retry, a question, or a prompt that input would answer by accident.
+func awaitingInputNotice(worker domain.SessionRecord, at time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[AO] Worker %s", worker.ID)
+	if name := strings.TrimSpace(domain.SanitizeControlChars(worker.DisplayName)); name != "" {
+		fmt.Fprintf(&b, " (%q)", name)
+	}
+	fmt.Fprintf(&b, " stopped and is waiting for input (%s); it has not finished its task.", at.UTC().Format(time.RFC3339))
+	if excerpt := boundedExcerpt(worker.Metadata.LatestAssistantUpdate, turnEndExcerptRunes); excerpt != "" {
+		fmt.Fprintf(&b, "\nIts last message:\n%s", excerpt)
+	}
+	fmt.Fprintf(&b, "\nRead its screen with `ao session tail %s` before sending anything: it may be showing an error to retry or a question to answer. Then continue it with `ao send --session %s --message \"...\"`.", worker.ID, worker.ID)
+	return b.String()
+}
+
 func boundedExcerpt(text string, limit int) string {
 	text = strings.TrimSpace(domain.SanitizeControlChars(text))
 	if text == "" {
@@ -89,6 +121,9 @@ func (m *Manager) applyTurnEndSignals(ctx context.Context, prev domain.ActivityS
 	}
 	if workerTurnEnded(prev, next) {
 		parent, notice := next.ParentSessionID, turnEndNotice(next, now)
+		m.goTurnEnd(ctx, func(ctx context.Context) { m.deliverTurnEndNotice(ctx, parent, notice) })
+	} else if workerAwaitsInput(prev, next) {
+		parent, notice := next.ParentSessionID, awaitingInputNotice(next, now)
 		m.goTurnEnd(ctx, func(ctx context.Context) { m.deliverTurnEndNotice(ctx, parent, notice) })
 	}
 	if next.Kind == domain.KindOrchestrator && next.Activity.State == domain.ActivityIdle && prev != domain.ActivityIdle {

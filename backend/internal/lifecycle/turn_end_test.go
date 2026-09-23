@@ -284,3 +284,47 @@ func TestTurnEnd_ConcurrentFlushesNeitherDuplicateNorDropNotices(t *testing.T) {
 		t.Fatal("notice queued during a flush was neither delivered nor left queued: it was dropped")
 	}
 }
+
+func stopWaiting(t *testing.T, m *Manager, id domain.SessionID) {
+	t.Helper()
+	if err := m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityWaitingInput, Event: "stop", LaunchID: "launch-1", Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.waitTurnEndDeliveries()
+}
+
+// A worker whose run stopped on an error sits waiting for a person, not
+// finished. Its orchestrator hears about it -- saying nothing would be worse
+// than the misleading "finished its turn" it used to get -- and the notice says
+// what it is: stopped and waiting, read the screen before sending anything.
+func TestTurnEnd_NotifiesWhenAWorkerStopsWaitingForInput(t *testing.T) {
+	m, st, msg := turnEndFixture(domain.ActivityIdle)
+
+	stopWaiting(t, m, "mer-1")
+
+	if len(msg.msgs) != 1 || msg.ids[0] != "mer-0" {
+		t.Fatalf("messages = %q to %v, want one notice to mer-0", msg.msgs, msg.ids)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{
+		`[AO] Worker mer-1 ("P2.5 animation") stopped and is waiting for input`,
+		"ao session tail mer-1",
+		"ao send --session mer-1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("notice missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "finished its turn") {
+		t.Fatalf("a worker waiting for input was reported as finished:\n%s", got)
+	}
+
+	// Still waiting: no second notice.
+	stopWaiting(t, m, "mer-1")
+	if len(msg.msgs) != 1 {
+		t.Fatalf("a repeated waiting signal re-notified: %q", msg.msgs)
+	}
+	_ = st
+}

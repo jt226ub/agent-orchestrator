@@ -161,6 +161,21 @@ function isRootSession(ctx: any): boolean {
   return ctx.hasUI === true;
 }
 
+// The stopReason of the run's final assistant message. OMP parks a run that
+// ended on "error" or "aborted" behind its Retry prompt, which is a wait for a
+// person rather than a finished turn. Searched for rather than assumed last:
+// an aborted tool call can leave a toolResult after it.
+function finalStopReason(event: any): string | undefined {
+  const messages = Array.isArray(event?.messages) ? event.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "assistant") {
+      const reason = messages[i].stopReason;
+      return typeof reason === "string" ? reason : undefined;
+    }
+  }
+  return undefined;
+}
+
 export default function (omp: ExtensionAPI) {
   omp.on("session_start", async (_event, ctx) => {
     if (!isRootSession(ctx)) return;
@@ -194,7 +209,10 @@ export default function (omp: ExtensionAPI) {
   omp.on("agent_end", async (event, ctx) => {
     if (!isRootSession(ctx)) return;
     if (!event.willContinue) {
-      callHookSync("stop", { session_id: sessionID(ctx) });
+      const stopReason = finalStopReason(event);
+      callHookSync("stop", stopReason === undefined
+        ? { session_id: sessionID(ctx) }
+        : { session_id: sessionID(ctx), stop_reason: stopReason });
     }
   });
   omp.on("session_shutdown", async (_event, ctx) => {
