@@ -74,6 +74,8 @@ the app bundles) is at `~/.local/bin/ao`. The build is unsigned; it runs because
 built locally, not downloaded. Auto-update stays off (`~/.ao/update-settings.json`), so
 nothing replaces the build behind the user's back.
 
+**Antigravity account rotation (from 2026-09-23).** With more than one Antigravity account, AO switches on its own when the active account reaches its 5-hour or weekly Gemini limit: to the next account with 5-hour capacity left, or, if none has any, to the one whose 5-hour window resets soonest, restarting then. An account out of its weekly limit is skipped until its weekly reset. Idle Antigravity workers are relaunched onto the new account (worktree and conversation kept; busy ones once they go idle) and their orchestrators get one notice each. Readings refresh every two minutes, so a switch lands within a few minutes of the limit. Two facts it depends on: agy 1.2.9 signs in from the macOS keychain (service `gemini`, account `antigravity`), which the switch now moves and verifies; and the reaper no longer terminates a worker between `exit-agent` and `resume-agent`. The policy is `planAgyRotation` in `backend/internal/service/agent/agy_rotation_plan.go`.
+
 **Logs.** The daemon writes its log to `~/.ao/data/logs/daemon.log` (32 MiB, one previous file
 kept as `daemon.log.1`) as well as stderr, so a session that stops responding can be explained
 after the fact. Failure seen twice on 2026-09-22 (02:40Z and 06:30Z), fixed by PR #19: the chat

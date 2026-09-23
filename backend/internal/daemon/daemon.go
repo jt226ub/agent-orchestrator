@@ -572,6 +572,14 @@ func Run() error {
 	lcStack.LCM.SetSessionInputLease(sessMgr)
 	lcStack.LCM.SetSessionOperationGate(sessMgr)
 	termMgr.SetSessionInputLease(sessMgr)
+	// Antigravity account rotation: when the active account reaches its limit,
+	// switch to the next with capacity (or wait for the soonest reset) and move
+	// idle Antigravity workers onto it, telling their orchestrators.
+	if relauncher, ok := sessMgr.(agyAgentRelauncher); ok && agentSvc != nil {
+		rotator := agentsvc.NewAgyAccountRotator(agentSvc,
+			agyRotationSessions{store: store, agents: relauncher, notifier: lcStack.LCM}, log)
+		go rotator.Run(ctx, agentsvc.AgyRotationInterval)
+	}
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{
 		Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log,
 		// Project saves and template binds must accept the same profile names a

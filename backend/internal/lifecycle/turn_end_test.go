@@ -328,3 +328,22 @@ func TestTurnEnd_NotifiesWhenAWorkerStopsWaitingForInput(t *testing.T) {
 	}
 	_ = st
 }
+
+// An AO notice that is not a worker's turn end -- the Antigravity account
+// rotation's -- travels the same way: written to an idle orchestrator, queued
+// for a busy one and flushed on its next idle.
+func TestNotifyOrchestratorDeliversOrQueues(t *testing.T) {
+	m, _, msg := turnEndFixture(domain.ActivityIdle)
+	m.NotifyOrchestrator(ctx, "mer-0", "[AO] Antigravity account rotation.")
+	m.waitTurnEndDeliveries()
+	if len(msg.msgs) != 1 || msg.ids[0] != "mer-0" || msg.msgs[0] != "[AO] Antigravity account rotation." {
+		t.Fatalf("messages = %q to %v", msg.msgs, msg.ids)
+	}
+
+	busy, _, busyMsg := turnEndFixture(domain.ActivityActive)
+	busy.NotifyOrchestrator(ctx, "mer-0", "[AO] Antigravity account rotation.")
+	busy.waitTurnEndDeliveries()
+	if len(busyMsg.msgs) != 0 || pendingNotices(busy, "mer-0") != 1 {
+		t.Fatalf("busy orchestrator: delivered=%d queued=%d, want 0 and 1", len(busyMsg.msgs), pendingNotices(busy, "mer-0"))
+	}
+}
