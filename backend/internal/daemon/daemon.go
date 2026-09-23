@@ -577,7 +577,8 @@ func Run() error {
 	// idle Antigravity workers onto it, telling their orchestrators.
 	if relauncher, ok := sessMgr.(agyAgentRelauncher); ok && agentSvc != nil {
 		rotator := agentsvc.NewAgyAccountRotator(agentSvc,
-			agyRotationSessions{store: store, agents: relauncher, notifier: lcStack.LCM}, log)
+			agyRotationSessions{store: store, agents: relauncher, notifier: lcStack.LCM}, log,
+			filepath.Join(cfg.DataDir, "harnesses", "agy", "rotation.json"))
 		go rotator.Run(ctx, agentsvc.AgyRotationInterval)
 	}
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{

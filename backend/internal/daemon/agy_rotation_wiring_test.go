@@ -17,18 +17,13 @@ func (f rotationStoreFake) ListAllSessions(context.Context) ([]domain.SessionRec
 }
 
 type relauncherFake struct {
-	calls     []string
-	resumeErr map[domain.SessionID]error
+	calls      []string
+	restartErr map[domain.SessionID]error
 }
 
-func (f *relauncherFake) ExitAgent(_ context.Context, id domain.SessionID) (domain.SessionRecord, error) {
-	f.calls = append(f.calls, "exit:"+string(id))
-	return domain.SessionRecord{}, nil
-}
-
-func (f *relauncherFake) ResumeAgentWithMode(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
-	f.calls = append(f.calls, "resume:"+string(id))
-	return sessionmanager.RestoreResult{}, f.resumeErr[id]
+func (f *relauncherFake) RestartAgent(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.calls = append(f.calls, "restart:"+string(id))
+	return sessionmanager.RestoreResult{}, f.restartErr[id]
 }
 
 func rotationRec(id string, harness domain.AgentHarness, state domain.ActivityState, parent string) domain.SessionRecord {
@@ -56,14 +51,14 @@ func TestAgyRotationSessionsRelaunchesOnlyIdleAgyTerminals(t *testing.T) {
 		rotationRec("exited", domain.HarnessAgy, domain.ActivityExited, "orch"),
 		terminated, chat,
 	}
-	agents := &relauncherFake{resumeErr: map[domain.SessionID]error{"waiting": errors.New("resume failed")}}
+	agents := &relauncherFake{restartErr: map[domain.SessionID]error{"waiting": errors.New("restart failed")}}
 	s := agyRotationSessions{store: store, agents: agents}
 
 	relaunched, busy, err := s.RelaunchIdleAgySessions(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"exit:idle", "resume:idle", "exit:waiting", "resume:waiting"}; !slices.Equal(agents.calls, want) {
+	if want := []string{"restart:idle", "restart:waiting"}; !slices.Equal(agents.calls, want) {
 		t.Fatalf("calls = %v, want %v", agents.calls, want)
 	}
 	if !slices.Equal(busy, []domain.SessionID{"busy"}) {
@@ -77,7 +72,7 @@ func TestAgyRotationSessionsRelaunchesOnlyIdleAgyTerminals(t *testing.T) {
 	if _, _, err := s.RelaunchIdleAgySessions(context.Background(), []domain.SessionID{"idle"}); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"exit:idle", "resume:idle"}; !slices.Equal(agents.calls, want) {
+	if want := []string{"restart:idle"}; !slices.Equal(agents.calls, want) {
 		t.Fatalf("restricted calls = %v, want %v", agents.calls, want)
 	}
 

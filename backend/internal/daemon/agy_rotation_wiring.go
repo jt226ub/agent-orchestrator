@@ -8,12 +8,10 @@ import (
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
-// agyAgentRelauncher is the session manager's exit-then-resume pair. Resume
-// keeps the worktree and continues the native conversation; the reaper leaves
-// the exited session alone in between (see Manager.AgentExitKeptForResume).
+// agyAgentRelauncher is the session manager's in-place restart (exit, then
+// resume): the worktree stays and the native conversation continues.
 type agyAgentRelauncher interface {
-	ExitAgent(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
-	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
+	RestartAgent(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 }
 
 // agyRotationSessions is the session side of Antigravity account rotation.
@@ -61,9 +59,7 @@ func (s agyRotationSessions) RelaunchIdleAgySessions(ctx context.Context, only [
 			continue
 		}
 		out := agentsvc.AgyRelaunchedSession{ID: rec.ID, Parent: rec.ParentSessionID, DisplayName: rec.DisplayName}
-		if _, err := s.agents.ExitAgent(ctx, rec.ID); err != nil {
-			out.Err = err
-		} else if _, err := s.agents.ResumeAgentWithMode(ctx, rec.ID); err != nil {
+		if _, err := s.agents.RestartAgent(ctx, rec.ID); err != nil {
 			out.Err = err
 		}
 		relaunched = append(relaunched, out)

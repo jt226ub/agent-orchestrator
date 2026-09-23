@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -82,7 +84,7 @@ func rotationSnapshot(id string, active bool, fiveHourUsed float64, fiveHourRese
 }
 
 func newTestRotator(accounts *fakeRotationAccounts, sessions *fakeRotationSessions, now *time.Time) *AgyAccountRotator {
-	r := NewAgyAccountRotator(accounts, sessions, nil)
+	r := NewAgyAccountRotator(accounts, sessions, nil, "")
 	r.now = func() time.Time { return *now }
 	return r
 }
@@ -234,5 +236,58 @@ func TestAgyRotationDoesNotRelaunchWhenTheSwitchFails(t *testing.T) {
 	}
 	if len(sessions.relaunchArgs) != 0 || len(sessions.notices) != 0 {
 		t.Fatal("relaunched or notified after a switch that did not happen")
+	}
+}
+
+// The work a rotation still owes survives an AO restart (such as a rebuild and
+// install): running agy workers keep the account they started with through the
+// restart, so a worker left busy at the switch must still be moved afterwards,
+// and a reset still waited for.
+func TestAgyRotationStateSurvivesARestart(t *testing.T) {
+	now := time.Date(2026, 9, 23, 17, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "rotation.json")
+	accounts := &fakeRotationAccounts{accounts: AgyAccounts{Accounts: []domain.AgyAccountSnapshot{
+		rotationSnapshot("a", true, 100, now.Add(3*time.Hour), 40, now),
+		rotationSnapshot("b", false, 5, now.Add(4*time.Hour), 10, now),
+	}}}
+	sessions := &fakeRotationSessions{busy: []domain.SessionID{"w-busy"}}
+	first := NewAgyAccountRotator(accounts, sessions, nil, statePath)
+	first.now = func() time.Time { return now }
+	if err := first.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(first.pendingBusy, []domain.SessionID{"w-busy"}) {
+		t.Fatalf("pending = %v, want the busy worker", first.pendingBusy)
+	}
+
+	// A new daemon: a fresh rotator over the same state file.
+	sessions.busy = nil
+	sessions.relaunched = []AgyRelaunchedSession{{ID: "w-busy", Parent: "orch-1"}}
+	second := NewAgyAccountRotator(accounts, sessions, nil, statePath)
+	second.now = func() time.Time { return now.Add(time.Minute) }
+	if !slices.Equal(second.pendingBusy, []domain.SessionID{"w-busy"}) || !second.lastSwitch.Equal(now) {
+		t.Fatalf("restored state: pending=%v lastSwitch=%v", second.pendingBusy, second.lastSwitch)
+	}
+	if err := second.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	last := sessions.relaunchArgs[len(sessions.relaunchArgs)-1]
+	if !slices.Equal(last, []domain.SessionID{"w-busy"}) {
+		t.Fatalf("after the restart the owed worker was not moved: last relaunch = %v", last)
+	}
+	if len(accounts.switches) != 1 {
+		t.Fatalf("the restart caused another switch: %v", accounts.switches)
+	}
+}
+
+// A corrupt state file must not stop the daemon or the rotation.
+func TestAgyRotationIgnoresAnUnreadableStateFile(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "rotation.json")
+	if err := os.WriteFile(statePath, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := NewAgyAccountRotator(&fakeRotationAccounts{}, &fakeRotationSessions{}, nil, statePath)
+	if len(r.pendingBusy) != 0 || !r.waitUntil.IsZero() {
+		t.Fatalf("corrupt state produced work: %+v", r)
 	}
 }

@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -65,6 +68,10 @@ type AgyAccountRotator struct {
 	logger   *slog.Logger
 	now      func() time.Time
 
+	// statePath keeps the work a rotation still owes -- busy workers to move,
+	// a reset to wait for -- across an AO restart. Empty keeps it in memory.
+	statePath string
+
 	mu          sync.Mutex
 	lastRefresh time.Time
 	lastSwitch  time.Time
@@ -73,16 +80,65 @@ type AgyAccountRotator struct {
 	announced   map[string]time.Time // weekly flags already reported, by account
 }
 
+// agyRotationState is the part of a rotation that must outlive an AO restart:
+// running agy workers keep the account they started with through a restart
+// (their terminals are adopted, not relaunched), so work still owed to them
+// cannot be rediscovered from the account readings alone.
+type agyRotationState struct {
+	PendingBusy []domain.SessionID `json:"pendingBusy,omitempty"`
+	WaitUntil   time.Time          `json:"waitUntil,omitzero"`
+	LastSwitch  time.Time          `json:"lastSwitch,omitzero"`
+}
+
 // NewAgyAccountRotator builds the rotation over the agent service and the
-// session side.
-func NewAgyAccountRotator(accounts agyRotationAccounts, sessions AgyRotationSessions, logger *slog.Logger) *AgyAccountRotator {
+// session side, resuming any work a previous daemon left in statePath.
+func NewAgyAccountRotator(accounts agyRotationAccounts, sessions AgyRotationSessions, logger *slog.Logger, statePath string) *AgyAccountRotator {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &AgyAccountRotator{
-		accounts: accounts, sessions: sessions, logger: logger,
+	r := &AgyAccountRotator{
+		accounts: accounts, sessions: sessions, logger: logger, statePath: statePath,
 		now:       func() time.Time { return time.Now().UTC() },
 		announced: map[string]time.Time{},
+	}
+	r.load()
+	return r
+}
+
+func (r *AgyAccountRotator) load() {
+	if r.statePath == "" {
+		return
+	}
+	data, err := os.ReadFile(r.statePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	var state agyRotationState
+	if err == nil {
+		err = json.Unmarshal(data, &state)
+	}
+	if err != nil {
+		r.logger.Warn("agy rotation: saved state unreadable; starting clean", "path", r.statePath, "error", err)
+		return
+	}
+	r.pendingBusy, r.waitUntil, r.lastSwitch = state.PendingBusy, state.WaitUntil, state.LastSwitch
+	if len(r.pendingBusy) > 0 || !r.waitUntil.IsZero() {
+		r.logger.Info("agy rotation: resuming saved work", "pendingWorkers", len(r.pendingBusy), "waitUntil", r.waitUntil)
+	}
+}
+
+// save records the owed work after every change; a failed write is logged, not
+// fatal, since the readings will still drive the next switch.
+func (r *AgyAccountRotator) save() {
+	if r.statePath == "" {
+		return
+	}
+	data, err := json.Marshal(agyRotationState{PendingBusy: r.pendingBusy, WaitUntil: r.waitUntil, LastSwitch: r.lastSwitch})
+	if err == nil {
+		err = writePrivateFileAtomic(r.statePath, data)
+	}
+	if err != nil {
+		r.logger.Warn("agy rotation: could not save state", "path", r.statePath, "error", err)
 	}
 }
 
@@ -109,6 +165,7 @@ func (r *AgyAccountRotator) Run(ctx context.Context, interval time.Duration) {
 func (r *AgyAccountRotator) Tick(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.save()
 	now := r.now()
 
 	accounts, err := r.accounts.CachedAgyAccounts(ctx)
@@ -228,6 +285,13 @@ func (r *AgyAccountRotator) relaunchAll(ctx context.Context, accounts AgyAccount
 		return fmt.Errorf("relaunch workers: %w", err)
 	}
 	r.pendingBusy = busy
+	if len(busy) > 0 {
+		ids := make([]string, len(busy))
+		for i, id := range busy {
+			ids[i] = string(id)
+		}
+		why += fmt.Sprintf(" Still mid-turn on the previous account, and moved automatically once idle (or now, if idle, with `ao session restart-agent <id>`): %s.", strings.Join(ids, ", "))
+	}
 	r.notifyRelaunched(ctx, relaunched, activeLabel(accounts), why+weekly)
 	return nil
 }
@@ -259,7 +323,7 @@ func (r *AgyAccountRotator) notifyRelaunched(ctx context.Context, relaunched []A
 			}
 		}
 		if len(failed) > 0 {
-			fmt.Fprintf(&b, "\nCould not relaunch, restore by hand with `ao session restore <id>`: %s", strings.Join(failed, ", "))
+			fmt.Fprintf(&b, "\nCould not relaunch; retry with `ao session restart-agent <id>` (or `ao session restore <id>` if it is terminated): %s", strings.Join(failed, ", "))
 		}
 		r.sessions.NotifyOrchestrator(ctx, parent, b.String())
 	}
