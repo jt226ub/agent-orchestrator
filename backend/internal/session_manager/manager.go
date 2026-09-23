@@ -439,8 +439,12 @@ type Manager struct {
 	statusVerificationLimit        time.Duration
 	agentOpMu                      sync.Mutex
 	agentOperations                map[domain.SessionID]agentOperationKind
-	interfaceRecoveryMu            sync.Mutex
-	deferredInterfaceRecovery      map[domain.SessionID]string
+	// exitKeptForResume records agents stopped by ExitAgent, keyed to the
+	// runtime launch that was stopped, so the reaper leaves the session for
+	// Resume Agent (see AgentExitKeptForResume).
+	exitKeptForResume         map[domain.SessionID]string
+	interfaceRecoveryMu       sync.Mutex
+	deferredInterfaceRecovery map[domain.SessionID]string
 	// switchDecisionInput opens a narrow human-only terminal lane while the
 	// source is blocked on permission during a mandatory switch.
 	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
@@ -805,6 +809,7 @@ func New(d Deps) *Manager {
 		backgroundContext:              d.BackgroundContext,
 		startupBackgroundReconcileDone: make(chan struct{}),
 		agentOperations:                make(map[domain.SessionID]agentOperationKind),
+		exitKeptForResume:              make(map[domain.SessionID]string),
 		switchDecisionInput:            make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:               make(map[domain.SessionID]struct{}),
 		inputLeases:                    make(map[domain.SessionID]int),
@@ -2475,6 +2480,7 @@ func (m *Manager) ExitAgent(ctx context.Context, id domain.SessionID) (domain.Se
 	if exited.Activity.State != domain.ActivityExited {
 		return domain.SessionRecord{}, fmt.Errorf("exit agent %s: %w", id, ErrSwitchSourceStopUnconfirmed)
 	}
+	m.keepExitForResume(id, rec.Metadata.RuntimeLaunchID)
 	return exited, nil
 }
 

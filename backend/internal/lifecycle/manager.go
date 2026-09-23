@@ -154,6 +154,15 @@ type sessionOperationGate interface {
 	SessionMutationInProgress(id domain.SessionID) bool
 }
 
+// agentExitKeeper is the optional part of the operation gate that reports an
+// agent the session manager stopped on request (`ao session exit-agent`) and is
+// keeping for Resume Agent. Exit-agent destroys the terminal runtime, so the
+// reaper sees exactly what a crash looks like; only the session manager knows
+// the difference.
+type agentExitKeeper interface {
+	AgentExitKeptForResume(id domain.SessionID, launchID string) bool
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -332,6 +341,14 @@ func (m *Manager) SetSessionOperationGate(gate sessionOperationGate) {
 	m.operationGateMu.Unlock()
 }
 
+func (m *Manager) agentExitKeptForResume(id domain.SessionID, launchID string) bool {
+	m.operationGateMu.RLock()
+	gate := m.operationGate
+	m.operationGateMu.RUnlock()
+	keeper, ok := gate.(agentExitKeeper)
+	return ok && keeper.AgentExitKeptForResume(id, launchID)
+}
+
 func (m *Manager) sessionMutationInProgress(id domain.SessionID) bool {
 	m.operationGateMu.RLock()
 	gate := m.operationGate
@@ -464,7 +481,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
-		if m.sessionMutationInProgress(id) {
+		if m.sessionMutationInProgress(id) || m.agentExitKeptForResume(id, currentLaunch) {
 			return cur, false
 		}
 		finalizer = m.usageFinalizer
@@ -482,7 +499,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated || cur.Revision != terminationRevision ||
 			cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
-			!runtimeClearlyDead(f, cur.Activity, now, m.window) || m.sessionMutationInProgress(id) {
+			!runtimeClearlyDead(f, cur.Activity, now, m.window) || m.sessionMutationInProgress(id) ||
+			m.agentExitKeptForResume(id, cur.Metadata.RuntimeLaunchID) {
 			return cur, false
 		}
 		next := cur
