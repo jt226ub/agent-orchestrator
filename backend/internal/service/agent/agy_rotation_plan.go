@@ -50,12 +50,16 @@ type agyRotationPlan struct {
 }
 
 func agyRotationCandidateFrom(a domain.AgyAccountSnapshot) agyRotationCandidate {
+	// Only a definite "unauthorized" rules an account out. agy's sign-in probe
+	// times out under load and leaves the state "unknown"; requiring
+	// "authorized" made every account unusable. A decision still needs a known
+	// capacity reading, which only a working credential produces.
 	c := agyRotationCandidate{
 		ID:     a.ID,
 		Label:  a.Label,
 		Active: a.Active,
 		Usable: a.Status == domain.AgyAccountStatusValid &&
-			a.Authentication.State == domain.AgentAuthenticationAuthorized,
+			a.Authentication.State != domain.AgentAuthenticationUnauthorized,
 	}
 	if overall := a.Capacity.Overall; overall != nil {
 		c.FiveHour = agyRotationWindowFrom(overall.Primary)
@@ -140,6 +144,12 @@ func planAgyRotation(accounts []agyRotationCandidate, now time.Time) (agyRotatio
 		if !until.IsZero() && (plan.WaitUntil.IsZero() || until.Before(plan.WaitUntil)) {
 			plan.WaitUntil = until
 		}
+	}
+	if plan.WaitUntil.IsZero() {
+		// No account can be chosen and no reset is known: there is nothing to do.
+		// Reporting "act" here with no target made the rotation relaunch every
+		// idle worker, onto the same account, every minute.
+		return agyRotationPlan{}, false
 	}
 	return plan, true
 }

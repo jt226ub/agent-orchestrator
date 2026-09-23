@@ -228,15 +228,20 @@ func (r *AgyAccountRotator) Tick(ctx context.Context) error {
 		return nil
 	}
 
+	// Workers are relaunched only after a switch that completed, or at a real
+	// reset below. A plan with neither a target nor a reset is nothing to act on.
+	if plan.TargetID == "" && plan.WaitUntil.IsZero() {
+		return nil
+	}
 	if plan.TargetID != "" {
 		if err := r.switchTo(ctx, plan.TargetID); err != nil {
 			return err
 		}
 		r.lastSwitch = now
 		accounts, _ = r.accounts.CachedAgyAccounts(ctx)
-	}
-	if plan.WaitUntil.IsZero() {
-		return r.relaunchAll(ctx, accounts, fmt.Sprintf("%s reached its limit; Antigravity is now on %s.", active.Label, labelOf(accounts, plan.TargetID)), weekly)
+		if plan.WaitUntil.IsZero() {
+			return r.relaunchAll(ctx, accounts, fmt.Sprintf("%s reached its limit; Antigravity is now on %s.", active.Label, labelOf(accounts, plan.TargetID)), weekly)
+		}
 	}
 	r.waitUntil = plan.WaitUntil
 	on := active.Label
