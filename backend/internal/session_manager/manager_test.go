@@ -2013,6 +2013,88 @@ func newExitedResumeManager(t *testing.T, runtime runtimeController, agent ports
 	return m, st, ws
 }
 
+// restart-agent is exit then resume in one call: a live agent gets a fresh
+// process on the same worktree and native conversation (so it re-reads the
+// device credentials and runs the current build), and the reaper cannot take
+// the session in between.
+func TestRestartAgent_RelaunchesALiveAgentInPlace(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, ws := newExitedResumeManager(t, runtime, agent)
+	live := st.sessions["mer-1"]
+	live.Activity = domain.Activity{State: domain.ActivityIdle}
+	st.sessions["mer-1"] = live
+
+	if _, err := m.RestartAgent(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if baseRuntime.destroyed != 1 {
+		t.Fatalf("the running agent was not stopped first: destroyed=%d", baseRuntime.destroyed)
+	}
+	// exit-agent destroyed the terminal, so the resume builds a fresh one rather
+	// than restarting the old handle -- what openraf-35 showed live.
+	if baseRuntime.created != 1 || runtime.restarted != 0 {
+		t.Fatalf("the agent was not relaunched in a fresh terminal: created=%d restarted=%d", baseRuntime.created, runtime.restarted)
+	}
+	if len(ws.calls) != 0 {
+		t.Fatalf("restart touched the workspace: %v", ws.calls)
+	}
+	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
+	if !reflect.DeepEqual(baseRuntime.lastCfg.Argv, wantArgv) {
+		t.Fatalf("relaunch argv = %#v, want the native resume %#v", baseRuntime.lastCfg.Argv, wantArgv)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" || got.Metadata.WorkspacePath != "/ws/mer-1" {
+		t.Fatalf("restarted session = %+v", got)
+	}
+	if m.AgentExitKeptForResume("mer-1", "launch-new") {
+		t.Fatal("the resumed launch is still marked as stopped: a crash of it would not be reaped")
+	}
+}
+
+// Restarting mid-turn (or at a permission prompt) would throw the turn away,
+// so restart-agent refuses and changes nothing.
+func TestRestartAgent_RefusesAnAgentMidTurn(t *testing.T) {
+	for _, state := range []domain.ActivityState{domain.ActivityActive, domain.ActivityBlocked} {
+		t.Run(string(state), func(t *testing.T) {
+			baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+			runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+			m, st, _ := newExitedResumeManager(t, runtime, supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}})
+			busy := st.sessions["mer-1"]
+			busy.Activity = domain.Activity{State: state}
+			st.sessions["mer-1"] = busy
+
+			if _, err := m.RestartAgent(ctx, "mer-1"); !errors.Is(err, ErrAgentMidTurn) {
+				t.Fatalf("err = %v, want ErrAgentMidTurn", err)
+			}
+			if baseRuntime.destroyed != 0 || baseRuntime.created != 0 || runtime.restarted != 0 {
+				t.Fatalf("a refused restart touched the runtime: destroyed=%d created=%d restarted=%d",
+					baseRuntime.destroyed, baseRuntime.created, runtime.restarted)
+			}
+			if st.sessions["mer-1"].Activity.State != state {
+				t.Fatalf("a refused restart changed the session: %+v", st.sessions["mer-1"])
+			}
+		})
+	}
+}
+
+func TestRestartAgent_ResumesAnAgentThatAlreadyExited(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	m, st, _ := newExitedResumeManager(t, runtime, supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}})
+
+	if _, err := m.RestartAgent(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if baseRuntime.destroyed != 0 || runtime.restarted != 1 {
+		t.Fatalf("an exited agent should only be resumed: destroyed=%d restarted=%d", baseRuntime.destroyed, runtime.restarted)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated || got.Activity.State == domain.ActivityExited {
+		t.Fatalf("restarted session = %+v, want live", got)
+	}
+}
+
 func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
@@ -10331,5 +10413,36 @@ func TestRestoreRetainsSpawnPermissionsAfterProjectChange(t *testing.T) {
 		if agent.lastRestore.Permissions != want || agent.lastRestore.Config.Permissions != want {
 			t.Fatalf("restore=%#v want %q", agent.lastRestore, want)
 		}
+	}
+}
+
+// An AO restart that falls between exit-agent and resume-agent (a rebuild, an
+// app quit) loses the in-memory "kept for resume" mark, but not the worker: the
+// startup pass relaunches a live session whose terminal is gone, exited agent
+// included, in its existing worktree with its native conversation, and fences
+// the reaper while it does. So the restart finishes what resume-agent would.
+func TestReconcileLive_RelaunchesAnAgentExitedBeforeTheRestart(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}} // exit-agent destroyed the terminal
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil }})
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1", AgentSessionID: "agent-s1"},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if rt.created != 1 || lcm.terminated["s1"] != 0 || st.sessions["s1"].IsTerminated {
+		t.Fatalf("exited agent after restart: created=%d terminated=%d session=%+v", rt.created, lcm.terminated["s1"], st.sessions["s1"])
+	}
+	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != "/wt/s1" {
+		t.Fatalf("restore configs = %+v, want the existing worktree", ws.restoreConfigs)
 	}
 }

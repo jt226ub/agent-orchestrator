@@ -138,6 +138,41 @@ ao session get mer-3 --json
 
 ---
 
+### ao session restart-agent
+
+Relaunch a session's agent in place: exit it and resume it in one step. The agent gets a fresh
+process -- so it signs in with the current credentials (for example after an Antigravity account
+switch) and runs the current build -- while the worktree, branch, uncommitted edits and the agent's
+native conversation are kept. An agent that already exited is simply resumed.
+
+It refuses (`AGENT_MID_TURN`) while the agent is working or held at a permission prompt, because the
+turn in progress would be lost: restart an idle agent. To stop a stuck agent deliberately, use
+`ao session exit-agent` then `ao session resume-agent`.
+
+The conversation carries over only if AO recorded the agent's native conversation id; otherwise the
+agent starts a fresh conversation in the same worktree.
+
+**Syntax:**
+```
+ao session restart-agent <id> [flags]
+```
+
+**Flags:**
+
+| Flag | Meaning | Default / Required |
+|---|---|---|
+| `--json` | Output as JSON | - |
+| `-p, --project string` | Project id to scope the lookup | - |
+
+**Examples:**
+
+```bash
+# Move an idle Antigravity worker onto the account AO just switched to
+ao session restart-agent mer-3
+```
+
+---
+
 ### ao session kill
 
 Terminate a session.

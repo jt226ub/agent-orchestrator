@@ -97,6 +97,10 @@ type exitAgentCommander interface {
 	ExitAgent(context.Context, domain.SessionID) (domain.SessionRecord, error)
 }
 
+type restartAgentCommander interface {
+	RestartAgent(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error)
+}
+
 // outputCommander reads a session's terminal scrollback; the production
 // manager implements it, test doubles may not.
 type outputCommander interface {
@@ -716,6 +720,26 @@ func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeA
 	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
 }
 
+// RestartAgent relaunches a session's agent in place -- exit, then resume --
+// so a fresh agent process picks up current credentials and the current build
+// while the worktree and native conversation stay.
+func (s *Service) RestartAgent(ctx context.Context, id domain.SessionID) (ResumeAgentOutcome, error) {
+	manager, ok := s.manager.(restartAgentCommander)
+	if !ok {
+		return ResumeAgentOutcome{}, apierr.Conflict(
+			"AGENT_RESTART_UNSUPPORTED", "This build cannot restart an agent in place", nil)
+	}
+	res, err := manager.RestartAgent(ctx, id)
+	if err != nil {
+		return ResumeAgentOutcome{}, toAPIError(err)
+	}
+	session, err := s.toSession(ctx, res.Session)
+	if err != nil {
+		return ResumeAgentOutcome{}, err
+	}
+	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
 // InterfaceTransitionStatus returns capability and progress without launching
 // a provider process or mutating the session.
 func (s *Service) InterfaceTransitionStatus(ctx context.Context, id domain.SessionID) (InterfaceTransitionStatus, error) {
@@ -1190,6 +1214,8 @@ func mapSessionError(err error) error {
 	case errors.Is(err, sessionmanager.ErrAgentExited):
 		return apierr.Conflict("AGENT_EXITED",
 			"The agent process exited; relaunch it before sending another message", nil)
+	case errors.Is(err, sessionmanager.ErrAgentMidTurn):
+		return apierr.Conflict("AGENT_MID_TURN", "The agent is mid-turn; restart it once it is idle, or stop it deliberately with exit-agent then resume-agent", nil)
 	case errors.Is(err, sessionmanager.ErrAgentNotExited):
 		return apierr.Conflict("AGENT_NOT_EXITED",
 			"The agent is still running; only exited agents can be resumed", nil)
