@@ -1888,3 +1888,34 @@ func TestAgyCredentialActivationDoesNotOpenAgy(t *testing.T) {
 		t.Fatal("credential activation opened Antigravity")
 	}
 }
+
+// An authorized reading that carries no email must not erase the one already
+// known: rotation notices named the account "Antigravity account" after it.
+func TestAgyAuthorizedReadingWithoutEmailKeepsTheKnownLabel(t *testing.T) {
+	manager := newTestAgyAccountManager(t, nil, nil)
+	manager.catalog.newID = func() string { return agyTestAccountID }
+	email := "known@example.com"
+	record := agyCommitTestAccount(t, manager.catalog, manager.pendingRoot, "b60a377d-da68-4a61-86f2-f31f04c571f2", ports.AgyAccountObservation{
+		Authentication: domain.AgentAuthenticationAuthorized, Method: domain.AgyAuthMethodGoogle, Email: &email,
+	})
+	id := record.Snapshot.ID
+	call := &agyAccountAuthCall{done: make(chan struct{})}
+	manager.mu.Lock()
+	manager.auth[id] = &agyAccountAuthState{call: call}
+	manager.mu.Unlock()
+
+	observation := agyAccountAuthenticationObservation(time.Now(), domain.AgentAuthenticationAuthorized)
+	manager.finishAuthentication(context.Background(), id, observation, domain.AgyAuthMethodUnknown, nil, false, call)
+
+	view := manager.cached()
+	if len(view.Accounts) != 1 {
+		t.Fatalf("accounts = %#v", view.Accounts)
+	}
+	got := view.Accounts[0]
+	if got.AccountEmail == nil || *got.AccountEmail != email || got.Label != email {
+		t.Fatalf("identity after an email-less reading: email=%v label=%q", got.AccountEmail, got.Label)
+	}
+	if got.AuthMethod != domain.AgyAuthMethodGoogle {
+		t.Fatalf("auth method = %q, want google kept", got.AuthMethod)
+	}
+}

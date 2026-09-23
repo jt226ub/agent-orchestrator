@@ -601,9 +601,16 @@ func (m *agyAccountManager) finishAuthentication(ctx context.Context, id string,
 			m.catalog.updateSnapshot(id, func(s *domain.AgyAccountSnapshot) {
 				s.Authentication = observation
 				if identified {
-					s.AuthMethod = method
-					s.AccountEmail = email
-					s.Label = agyAccountLabel(email)
+					// agy can report "authorized" without an email. Keep what is
+					// already known, as the saved descriptor does, or the label
+					// falls back to "Antigravity account" until AO restarts.
+					if method != domain.AgyAuthMethodUnknown {
+						s.AuthMethod = method
+					}
+					if email != nil {
+						s.AccountEmail = email
+					}
+					s.Label = agyAccountLabel(s.AccountEmail)
 				}
 			})
 			if identified {
