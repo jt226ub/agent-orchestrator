@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,6 +191,21 @@ func (m *agyAccountManager) activateFromCredentialLocked(ctx context.Context, ac
 	if currentErr != nil || latestErr != nil || !sameCodexFileState(currentState, latestState) ||
 		!bytes.Equal(currentCredential, latestCredential) || !bytes.Equal(currentCredential, targetCredential) {
 		return ports.ErrAgyGlobalAccountChanged
+	}
+	// agy 1.2.9 signs in from the keychain before the file, so the switch is not
+	// real until the keychain holds the target too. If it cannot, put the file
+	// back rather than report a switch no worker would honour.
+	if err := mirrorAgyCredentialToKeychain(ctx, m.keychain, targetCredential); err != nil {
+		var restoreErr error
+		if previousErr == nil {
+			restoreErr = agyWriteGlobalCredentialSettled(globalPath, previousCredential)
+		} else {
+			restoreErr = os.Remove(globalPath)
+		}
+		if restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore the device credential: %w", restoreErr))
+		}
+		return notCommitted(err)
 	}
 	now := m.now()
 	m.mu.Lock()
