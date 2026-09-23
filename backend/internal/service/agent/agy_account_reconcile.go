@@ -326,6 +326,8 @@ func (m *agyAccountManager) reconcileGlobalInner(ctx context.Context) error { //
 	if m.globalHome == "" {
 		return agyDeviceReconciliationFailure("account_discovery_unavailable", false)
 	}
+	// Decide the active account from what agy signs in with, not a stale file.
+	m.syncGlobalCredentialFromKeychain(ctx)
 	if err := m.catalog.refresh(); err != nil {
 		return agyDeviceReconciliationStorageFailure(err)
 	}

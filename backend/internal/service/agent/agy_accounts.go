@@ -123,6 +123,9 @@ type agyAccountManager struct {
 	globalHome        string
 	pendingRoot       string
 	switchStagingRoot string
+	// keychain is the item agy 1.2.9+ signs in from; a no-op except for the
+	// user's own home on macOS (see defaultAgyKeychain).
+	keychain agyKeychain
 
 	mu                      sync.Mutex
 	accountStoreCall        *agyAccountReconcileCall
@@ -171,6 +174,7 @@ func newAgyAccountManager(ctx context.Context, accountRoot, pendingRoot, switchS
 			Status: domain.AgyDeviceReconciliationNotChecked, ReasonCode: "not_checked",
 		},
 	}
+	m.keychain = defaultAgyKeychain(m.globalHome)
 	m.mutations <- struct{}{}
 	m.capacity = newAgyAccountCapacityCoordinator(m)
 	m.catalog.setOnRemoved(func(ids []string) { m.capacity.removeAccounts(ids); m.publish() })

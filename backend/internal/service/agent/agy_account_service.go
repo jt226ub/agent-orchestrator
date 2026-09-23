@@ -508,6 +508,9 @@ func (s *Service) PrepareAgyAccountForSwitch(ctx context.Context, switchID, acco
 		return notPrepared(apierr.Unavailable("AGY_ACCOUNT_SWITCH_ACTIVATION_UNCONFIRMED", "The selected Antigravity credential could not be staged"))
 	}
 
+	// Checkpoint the source from what agy signs in with: on agy 1.2.9 the
+	// keychain holds the live credential and the file can be stale.
+	s.agyAccounts.syncGlobalCredentialFromKeychain(ctx)
 	globalCredential, globalState, globalErr := readCodexFileState(s.agyAccounts.globalCredentialPath(), true)
 	if globalErr != nil {
 		_ = os.RemoveAll(stagingDir)
