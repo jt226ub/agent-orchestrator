@@ -200,6 +200,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionExitAgentCommand(ctx))
 	cmd.AddCommand(newSessionResumeAgentCommand(ctx))
+	cmd.AddCommand(newSessionRestartAgentCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	cmd.AddCommand(newSessionClaimPRCommand(ctx))
@@ -745,6 +746,46 @@ func (c *commandContext) resumeSessionAgent(ctx context.Context, cmd *cobra.Comm
 		return err
 	}
 	return nil
+}
+
+func newSessionRestartAgentCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "restart-agent <id>",
+		Short: "Relaunch a session's agent in place, keeping its worktree and conversation",
+		Long: "Exit the agent and resume it in one step, so a fresh agent process picks up the current\n" +
+			"credentials (for example after an Antigravity account switch) and the current build, while\n" +
+			"the worktree and the agent's native conversation are kept. An agent that already exited is\n" +
+			"simply resumed. Restart an idle agent: a turn in progress is lost.",
+		Args: oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.restartSessionAgent(cmd.Context(), cmd, id, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func (c *commandContext) restartSessionAgent(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res resumeAgentResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/restart-agent", struct{}{}, &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "agent restarted for session %s\n", res.SessionID)
+	return err
 }
 
 func (c *commandContext) renameSession(ctx context.Context, cmd *cobra.Command, id, displayName string, opts sessionOptions) error {

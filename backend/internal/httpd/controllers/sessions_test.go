@@ -34,6 +34,7 @@ import (
 )
 
 type fakeSessionService struct {
+	restarted                  []domain.SessionID
 	output                     string
 	sessions                   map[domain.SessionID]domain.Session
 	sent                       string
@@ -372,6 +373,11 @@ func (f *fakeSessionService) ExitAgent(_ context.Context, id domain.SessionID) (
 	s.Status = domain.StatusExited
 	f.sessions[id] = s
 	return sessionsvc.ExitAgentOutcome{Session: s}, nil
+}
+
+func (f *fakeSessionService) RestartAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
+	f.restarted = append(f.restarted, id)
+	return f.ResumeAgent(ctx, id)
 }
 
 func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
@@ -1288,6 +1294,19 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &resumed)
 	if resumed.SessionID != "ao-2" || resumed.ResumeMode != "native" {
 		t.Fatalf("resume response = %#v", resumed)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/restart-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("restart agent = %d, want 200; body=%s", status, body)
+	}
+	var restarted struct {
+		SessionID  string `json:"sessionId"`
+		ResumeMode string `json:"resumeMode"`
+	}
+	mustJSON(t, body, &restarted)
+	if restarted.SessionID != "ao-2" || restarted.ResumeMode != "native" {
+		t.Fatalf("restart response = %#v", restarted)
 	}
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)

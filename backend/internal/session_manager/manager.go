@@ -31,11 +31,14 @@ import (
 // Sentinel errors returned by the Session Manager; callers match them with
 // errors.Is.
 var (
-	ErrNotFound            = errors.New("session: not found")
-	ErrNotRestorable       = errors.New("session: not restorable (not terminal)")
-	ErrTerminated          = errors.New("session: terminated")
-	ErrAgentExited         = errors.New("session: agent exited")
-	ErrAgentNotExited      = errors.New("session: agent has not exited")
+	ErrNotFound       = errors.New("session: not found")
+	ErrNotRestorable  = errors.New("session: not restorable (not terminal)")
+	ErrTerminated     = errors.New("session: terminated")
+	ErrAgentExited    = errors.New("session: agent exited")
+	ErrAgentNotExited = errors.New("session: agent has not exited")
+	// ErrAgentMidTurn refuses an in-place restart while the agent is working or
+	// held at a permission prompt: relaunching then would throw away the turn.
+	ErrAgentMidTurn        = errors.New("session: agent is mid-turn")
 	ErrAgentExitInProgress = errors.New("session: agent exit is already in progress")
 	ErrIncompleteHandle    = errors.New("session: incomplete teardown handle")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
@@ -2520,6 +2523,38 @@ func (m *Manager) recordAgentExited(ctx context.Context, rec domain.SessionRecor
 		signal.LaunchID = strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
 	}
 	return m.lcm.ApplyActivitySignal(ctx, rec.ID, signal)
+}
+
+// RestartAgent relaunches a session's agent in place: it exits the agent, then
+// resumes it, so a fresh agent process picks up the current credentials and
+// build while the worktree and the native conversation stay. This is how a
+// worker follows an Antigravity account switch, since a running agy keeps the
+// account it started with. An agent that has already exited is simply resumed.
+// Between the two steps the reaper leaves the session alone (see
+// AgentExitKeptForResume) and input to the exited agent is refused, so nothing
+// can land in the gap.
+func (m *Manager) RestartAgent(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restart agent %s: %w", id, err)
+	}
+	if !ok {
+		return RestoreResult{}, fmt.Errorf("restart agent %s: %w", id, ErrNotFound)
+	}
+	// A turn in progress (or held at a permission prompt) would be lost. Refuse
+	// rather than interrupt; exit-agent then resume-agent remains the deliberate
+	// way to stop a stuck agent.
+	if rec.Activity.State == domain.ActivityActive || rec.Activity.State == domain.ActivityBlocked {
+		return RestoreResult{}, fmt.Errorf("restart agent %s: %w", id, ErrAgentMidTurn)
+	}
+	if _, err := m.ExitAgent(ctx, id); err != nil && !errors.Is(err, ErrAgentExited) {
+		return RestoreResult{}, fmt.Errorf("restart agent %s: %w", id, err)
+	}
+	res, err := m.ResumeAgentWithMode(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restart agent %s: %w", id, err)
+	}
+	return res, nil
 }
 
 // ResumeAgentWithMode replaces an exited agent inside its still-live session.
