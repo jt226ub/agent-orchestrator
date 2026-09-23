@@ -351,3 +351,41 @@ func (m *Manager) beginAgentResume(ctx context.Context, id domain.SessionID) err
 func (m *Manager) endAgentResume(id domain.SessionID) {
 	m.endAgentOperation(id, agentOperationResume)
 }
+
+// keepExitForResume marks an agent ExitAgent stopped on request. ExitAgent
+// destroys the whole terminal runtime, so without this the reaper's next tick
+// saw a dead runtime and an exited agent -- the same facts as a crash -- and
+// terminated the session, turning exit-agent then resume-agent into a race
+// against the reaper. The mark is tied to the launch that was stopped: once
+// resume-agent or restore starts a new launch it no longer matches, so a crash
+// of the resumed agent is reaped as before. It is in memory only; after a
+// daemon restart, reconciliation decides what happens to the session.
+func (m *Manager) keepExitForResume(id domain.SessionID, launchID string) {
+	id = domain.SessionID(strings.TrimSpace(string(id)))
+	launchID = strings.TrimSpace(launchID)
+	if id == "" || launchID == "" {
+		return
+	}
+	m.agentOpMu.Lock()
+	defer m.agentOpMu.Unlock()
+	m.exitKeptForResume[id] = launchID
+}
+
+// AgentExitKeptForResume reports whether the agent running as launchID was
+// stopped on request by ExitAgent and is being kept for Resume Agent. The
+// lifecycle reaper asks before terminating a session whose runtime has died.
+func (m *Manager) AgentExitKeptForResume(id domain.SessionID, launchID string) bool {
+	id = domain.SessionID(strings.TrimSpace(string(id)))
+	launchID = strings.TrimSpace(launchID)
+	m.agentOpMu.Lock()
+	defer m.agentOpMu.Unlock()
+	kept, ok := m.exitKeptForResume[id]
+	return ok && launchID != "" && kept == launchID
+}
+
+// The lifecycle reaper discovers this through an optional interface on the
+// operation gate; a signature drift would silently switch the protection off.
+var _ interface {
+	AgentExitKeptForResume(id domain.SessionID, launchID string) bool
+	SessionMutationInProgress(id domain.SessionID) bool
+} = (*Manager)(nil)

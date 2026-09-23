@@ -5381,3 +5381,48 @@ func TestEmitTelemetryStampsRequestID(t *testing.T) {
 		})
 	}
 }
+
+// keepingGate is an operation gate that reports one launch as stopped on
+// request by exit-agent and kept for Resume Agent.
+type keepingGate struct {
+	id     domain.SessionID
+	launch string
+}
+
+func (keepingGate) SessionMutationInProgress(domain.SessionID) bool { return false }
+func (g keepingGate) AgentExitKeptForResume(id domain.SessionID, launchID string) bool {
+	return id == g.id && launchID == g.launch
+}
+
+// exit-agent destroys the terminal runtime, so the reaper sees the same facts
+// as a crash. Only the launch the session manager stopped on request is kept;
+// reaping it had made resume-agent a race against the 5-second reaper tick (a
+// session resumed 5.3 s after exit-agent was already terminated). A crash, or
+// the death of a later launch, is still reaped.
+func TestRuntimeObservation_KeepsAnAgentExitedOnRequestForResume(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		keptLaunch string
+		wantReaped bool
+	}{
+		{name: "exited on request", keptLaunch: "launch-1", wantReaped: false},
+		{name: "crash, nothing kept", keptLaunch: "", wantReaped: true},
+		{name: "an older launch was kept", keptLaunch: "launch-0", wantReaped: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			m.SetSessionOperationGate(keepingGate{id: "mer-1", launch: tt.keptLaunch})
+			rec := working("mer-1")
+			rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now().Add(-2 * time.Minute)}
+			rec.Metadata.RuntimeLaunchID = "launch-1"
+			st.sessions["mer-1"] = rec
+
+			if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed, LaunchID: "launch-1"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := st.sessions["mer-1"]; got.IsTerminated != tt.wantReaped {
+				t.Fatalf("terminated = %v, want %v", got.IsTerminated, tt.wantReaped)
+			}
+		})
+	}
+}

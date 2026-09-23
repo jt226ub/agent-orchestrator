@@ -1972,6 +1972,14 @@ func TestExitAgentStopsOnlyControllerAndPreservesSessionIdentity(t *testing.T) {
 		got.Metadata.RuntimeLaunchID != "launch-current" || got.Metadata.AgentSessionID != "native-thread-1" {
 		t.Fatalf("exit changed resumable identity: %+v", got.Metadata)
 	}
+	// The runtime is gone, so only this mark stops the reaper treating the
+	// session like a crash before resume-agent runs.
+	if !m.AgentExitKeptForResume("mer-1", "launch-current") {
+		t.Fatal("exit-agent did not keep the stopped launch for Resume Agent")
+	}
+	if m.AgentExitKeptForResume("mer-1", "launch-next") {
+		t.Fatal("the mark outlived the launch it was made for")
+	}
 }
 
 func newExitedResumeManager(t *testing.T, runtime runtimeController, agent ports.Agent) (*Manager, *fakeStore, *fakeWorkspace) {
