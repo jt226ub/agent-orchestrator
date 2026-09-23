@@ -291,3 +291,55 @@ func TestAgyRotationIgnoresAnUnreadableStateFile(t *testing.T) {
 		t.Fatalf("corrupt state produced work: %+v", r)
 	}
 }
+
+// The loop seen live: agy's sign-in probe timed out, leaving both accounts'
+// authentication "unknown" while their capacity readings were fresh and both
+// 5-hour windows spent. The rotation relaunched every idle worker onto the same
+// account each minute. It must stay on the account that resets first and
+// relaunch nothing until that reset.
+func TestAgyRotationDoesNotLoopWhenTheSignInCheckIsUnknown(t *testing.T) {
+	now := time.Date(2026, 9, 23, 20, 0, 0, 0, time.UTC)
+	a := rotationSnapshot("a", true, 100, now.Add(47*time.Minute), 60, now)
+	b := rotationSnapshot("b", false, 100, now.Add(2*time.Hour), 30, now)
+	a.Authentication.State = domain.AgentAuthenticationUnknown
+	b.Authentication.State = domain.AgentAuthenticationUnknown
+	accounts := &fakeRotationAccounts{accounts: AgyAccounts{Accounts: []domain.AgyAccountSnapshot{a, b}}}
+	sessions := &fakeRotationSessions{relaunched: []AgyRelaunchedSession{{ID: "w-1", Parent: "orch-1"}}}
+	rotator := newTestRotator(accounts, sessions, &now)
+
+	for range 3 {
+		if err := rotator.Tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	if len(accounts.switches) != 0 || len(sessions.relaunchArgs) != 0 {
+		t.Fatalf("acted before the reset: switches=%v relaunches=%v", accounts.switches, sessions.relaunchArgs)
+	}
+	if want := a.Capacity.Overall.Primary.ResetsAt; !rotator.waitUntil.Equal(*want) {
+		t.Fatalf("waitUntil = %v, want the active account's reset %v", rotator.waitUntil, *want)
+	}
+}
+
+// With no account it can choose and no reset it knows of, the rotation does
+// nothing: no switch, no relaunch, no notice.
+func TestAgyRotationDoesNothingWhenNoAccountCanBeChosen(t *testing.T) {
+	now := time.Date(2026, 9, 23, 20, 0, 0, 0, time.UTC)
+	a := rotationSnapshot("a", true, 100, now.Add(47*time.Minute), 60, now)
+	b := rotationSnapshot("b", false, 100, now.Add(2*time.Hour), 30, now)
+	a.Authentication.State = domain.AgentAuthenticationUnauthorized
+	b.Authentication.State = domain.AgentAuthenticationUnauthorized
+	accounts := &fakeRotationAccounts{accounts: AgyAccounts{Accounts: []domain.AgyAccountSnapshot{a, b}}}
+	sessions := &fakeRotationSessions{relaunched: []AgyRelaunchedSession{{ID: "w-1", Parent: "orch-1"}}}
+	rotator := newTestRotator(accounts, sessions, &now)
+
+	for range 3 {
+		if err := rotator.Tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	if len(accounts.switches) != 0 || len(sessions.relaunchArgs) != 0 || len(sessions.notices) != 0 {
+		t.Fatalf("acted with nothing to act on: switches=%v relaunches=%v notices=%v", accounts.switches, sessions.relaunchArgs, sessions.notices)
+	}
+}

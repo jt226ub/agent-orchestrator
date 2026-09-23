@@ -108,6 +108,13 @@ func TestPlanAgyRotation(t *testing.T) {
 			wantTarget: "d",
 		},
 		{
+			name: "no other account can be chosen and no reset is known: nothing to do",
+			accounts: []agyRotationCandidate{
+				{ID: "a", Active: true, FiveHour: spent(in(time.Hour)), Weekly: weekOK},
+				{ID: "b", FiveHour: spent(in(2 * time.Hour)), Weekly: weekOK},
+			},
+		},
+		{
 			name:     "active capacity unknown: do not guess",
 			accounts: []agyRotationCandidate{{ID: "a", Active: true, Usable: true}, acct("b", false, fresh, weekOK)},
 		},
