@@ -126,6 +126,9 @@ type agyAccountManager struct {
 	// keychain is the item agy 1.2.9+ signs in from; a no-op except for the
 	// user's own home on macOS (see defaultAgyKeychain).
 	keychain agyKeychain
+	// homeKeychains gives each managed home a keychain of its own so agy can
+	// save there without macOS prompting (see agy_home_keychain.go).
+	homeKeychains agyHomeKeychains
 
 	mu                      sync.Mutex
 	accountStoreCall        *agyAccountReconcileCall
@@ -175,6 +178,7 @@ func newAgyAccountManager(ctx context.Context, accountRoot, pendingRoot, switchS
 		},
 	}
 	m.keychain = defaultAgyKeychain(m.globalHome)
+	m.homeKeychains = defaultAgyHomeKeychains(m.globalHome)
 	m.mutations <- struct{}{}
 	m.capacity = newAgyAccountCapacityCoordinator(m)
 	m.catalog.setOnRemoved(func(ids []string) { m.capacity.removeAccounts(ids); m.publish() })
@@ -501,6 +505,9 @@ func (m *agyAccountManager) runAuthentication(record agyAccountRecord, call *agy
 		_ = m.reconcileGlobalWithPolicy(m.ctx, true)
 		m.retryAuthenticationAfterDeviceChange(record.Snapshot.ID, call)
 		return
+	}
+	if account.Managed {
+		defer m.prepareHomeKeychain(ctx, account.Home)()
 	}
 	client, err := m.factory.Open(ctx, account)
 	if err != nil {
