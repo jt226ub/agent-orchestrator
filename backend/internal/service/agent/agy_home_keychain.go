@@ -98,6 +98,11 @@ func (k *securityAgyHomeKeychains) prepare(ctx context.Context, home string) err
 	} else if err != nil {
 		return err
 	}
+	// security creates the file world-readable; its password is fixed, so
+	// keep it as private as the credential file beside it.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return err
+	}
 	link := filepath.Join(dir, agyHomeKeychainLink)
 	if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
 		if err := os.Symlink(agyHomeKeychainName, link); err != nil {

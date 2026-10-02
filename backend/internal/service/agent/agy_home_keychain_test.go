@@ -75,6 +75,9 @@ func TestAgyHomeKeychainPrepareCreatesOnceLinksUnlocksAndMirrorsTheFile(t *testi
 	if security.created != 1 {
 		t.Fatalf("create-keychain ran %d times, want once", security.created)
 	}
+	if info, err := os.Stat(filepath.Join(home, "Library", "Keychains", agyHomeKeychainName)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("account keychain mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
 	link, err := os.Readlink(filepath.Join(home, "Library", "Keychains", agyHomeKeychainLink))
 	if err != nil || link != agyHomeKeychainName {
 		t.Fatalf("default-keychain link = %q, %v", link, err)
