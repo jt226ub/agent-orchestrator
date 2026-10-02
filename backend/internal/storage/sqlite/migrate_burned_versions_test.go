@@ -152,9 +152,9 @@ var shippedMigrations = map[int64]string{
 	147: "0147_native_history_provenance.sql",
 	148: "0148_notification_dismissal.sql",
 	149: "0149_reviewer_chat_conversations.sql",
-	151: "0151_session_profile.sql",
-	152: "0152_agy_account_management.sql",
-	153: "0153_session_parent.sql",
+	171: "0171_session_profile.sql",
+	172: "0172_agy_account_management.sql",
+	173: "0173_session_parent.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
