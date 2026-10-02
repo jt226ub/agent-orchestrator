@@ -72,7 +72,14 @@ func defaultAgyKeychain(globalHome string) agyKeychain {
 }
 
 func runSecurity(ctx context.Context, stdin []byte, args ...string) ([]byte, int, error) {
+	return runSecurityWithEnv(ctx, nil, stdin, args...)
+}
+
+// runSecurityWithEnv runs /usr/bin/security with env, or the daemon's own
+// environment when env is nil.
+func runSecurityWithEnv(ctx context.Context, env []string, stdin []byte, args ...string) ([]byte, int, error) {
 	cmd := exec.CommandContext(ctx, agySecurityPath, args...) //nolint:gosec // fixed system binary; arguments are constants
+	cmd.Env = env
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

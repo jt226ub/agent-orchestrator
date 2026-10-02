@@ -176,6 +176,9 @@ func (c *agyAccountCapacityCoordinator) runRead(record agyAccountRecord, call *a
 		c.retryAfterDeviceChange(record.Snapshot.ID, call)
 		return
 	}
+	if account.Managed {
+		defer c.manager.prepareHomeKeychain(ctx, account.Home)()
+	}
 	client, err := c.manager.factory.Open(ctx, account)
 	if err != nil {
 		c.finishFailure(record.Snapshot.ID, attemptedAt, domain.AgyCapacityReasonCheckFailed, "Antigravity could not be started to read plan capacity.", call)
