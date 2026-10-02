@@ -63,23 +63,30 @@ type UpdateProject struct {
 }
 
 type Session struct {
-	ID               string
-	OrgID            string
-	ProjectID        string
-	Kind             string
-	Harness          string
-	DisplayName      string
-	Branch           string
-	Mode             string
-	DeniedCommands   []string
-	ActivityState    contract.ActivityState
-	IsTerminated     bool
-	RuntimeConnected bool
-	SandboxProvider  string
-	DesiredState     string
-	ObservedState    string
-	RuntimeState     string
-	RuntimeError     string
+	ID                 string
+	OrgID              string
+	ProjectID          string
+	Kind               string
+	Harness            string
+	DisplayName        string
+	Branch             string
+	Mode               string
+	Model              string
+	DeniedCommands     []string
+	Interface          SessionInterface
+	ActivityState      contract.ActivityState
+	IsTerminated       bool
+	RuntimeConnected   bool
+	WorkerLastSeenAt   *time.Time
+	StartupAttempts    int
+	SandboxProvider    string
+	DesiredState       string
+	ObservedState      string
+	RuntimeState       string
+	RuntimeError       string
+	AutoInjectCI       bool
+	AutoInjectReview   bool
+	TerminateOnPRMerge bool
 	// WorkerEpoch is the highest worker epoch the session has minted for its
 	// agent terminal. It advances every time a fresh worker connects (a resume
 	// from idle-pause, a restore, or any re-provision), so a client can key its
@@ -92,12 +99,20 @@ type Session struct {
 
 // Status derives the session's display status from runtime and pull request facts.
 func (s Session) Status(now time.Time, prs []contract.PRFacts) contract.SessionStatus {
+	starting := s.DesiredState == "running" && !s.RuntimeConnected && s.WorkerLastSeenAt == nil && s.StartupAttempts == 0 && (s.ObservedState == "requested" || s.ObservedState == "provisioning" ||
+		s.ObservedState == "bootstrapping" || s.ObservedState == "restoring" ||
+		s.ObservedState == "ready" || s.ObservedState == "running")
+	lastSignalAt := s.UpdatedAt
+	if s.WorkerLastSeenAt != nil {
+		lastSignalAt = *s.WorkerLastSeenAt
+	}
 	return contract.DeriveStatus(contract.SessionFacts{
 		Activity:       s.ActivityState,
-		LastActivityAt: s.UpdatedAt,
+		LastActivityAt: lastSignalAt,
 		HasSignal:      s.RuntimeConnected,
-		SignalExpected: s.RuntimeState != "",
-		IsTerminated:   s.IsTerminated,
+		SignalExpected: s.DesiredState == "running" && !starting &&
+			(s.WorkerLastSeenAt != nil || s.StartupAttempts > 0 || s.ObservedState == "failed"),
+		IsTerminated: s.IsTerminated,
 	}, prs, now, 2*time.Minute)
 }
 
@@ -108,7 +123,9 @@ type CreateSession struct {
 	DisplayName    string
 	Prompt         string
 	Mode           string
+	Model          string
 	DeniedCommands []string
+	Interface      SessionInterface
 	Provider       string
 	// SandboxConnectionID names a bring-your-own provider credential. It is
 	// empty for sandboxes that run on the platform's own account.
@@ -127,6 +144,58 @@ type CreateSession struct {
 	ParentSessionID string
 }
 
+// RepoRef is one additional repository (beyond the project's primary repo) to
+// clone into a session's workspace, optionally at a specific branch. Configured
+// on the project (its Config carries the coder dev-kit config) and inherited by
+// every session of that project.
+type RepoRef struct {
+	URL    string `json:"url"`
+	Branch string `json:"branch,omitempty"`
+}
+
+// ProjectCoderConfig is the coder dev-kit configuration chosen when the project
+// is set up. It is stored under the project's Config as {"coder": {...}} and
+// inherited by every coder session of the project. An absent/empty config keeps
+// the deployment default template and single-repo behavior.
+type ProjectCoderConfig struct {
+	TemplateID    string    `json:"templateId,omitempty"`
+	Size          string    `json:"size,omitempty"`
+	StartupScript string    `json:"startupScript,omitempty"`
+	ExtraRepos    []RepoRef `json:"extraRepos,omitempty"`
+}
+
+// DecodeProjectCoderConfig extracts the coder dev-kit config from a project's
+// Config json. ok is false when the project has no coder config.
+func DecodeProjectCoderConfig(config json.RawMessage) (cfg ProjectCoderConfig, ok bool) {
+	if len(config) == 0 {
+		return ProjectCoderConfig{}, false
+	}
+	var envelope struct {
+		Coder *ProjectCoderConfig `json:"coder"`
+	}
+	if err := json.Unmarshal(config, &envelope); err != nil || envelope.Coder == nil {
+		return ProjectCoderConfig{}, false
+	}
+	return *envelope.Coder, true
+}
+
+// MergeProjectCoderConfig stores the coder dev-kit config under the "coder" key
+// of a project's Config, preserving any other keys the config already carries.
+func MergeProjectCoderConfig(config json.RawMessage, coder ProjectCoderConfig) (json.RawMessage, error) {
+	merged := map[string]json.RawMessage{}
+	if len(config) > 0 {
+		if err := json.Unmarshal(config, &merged); err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(coder)
+	if err != nil {
+		return nil, err
+	}
+	merged["coder"] = encoded
+	return json.Marshal(merged)
+}
+
 type ClientEvent struct {
 	SessionID string
 	Sequence  int64
@@ -142,7 +211,10 @@ type WorkerTurn struct {
 	ID                string
 	SessionID         string
 	Prompt            string
+	Model             string
+	ReasoningEffort   string
 	Mode              string
+	ApprovalMode      string
 	DeniedCommands    []string
 	Harness           string
 	Attempt           int
@@ -150,6 +222,13 @@ type WorkerTurn struct {
 	CancelRequested   bool
 	AgentSessionID    string
 	UserEventSequence int64
+}
+
+type ChatTurnSettings struct {
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	ApprovalMode    string `json:"approvalMode,omitempty"`
 }
 
 // WorkerCredential is the encrypted coding-agent credential selected by the
@@ -181,15 +260,16 @@ type WorkerRequest struct {
 }
 
 type TerminalSession struct {
-	ID           string
-	OrgID        string
-	SessionID    string
-	WorkerEpoch  int64
-	Kind         string
-	State        string
-	Scopes       []string
-	ErrorMessage string
-	ExpiresAt    time.Time
+	ID                 string
+	OrgID              string
+	SessionID          string
+	WorkerEpoch        int64
+	NextOutputSequence int64
+	Kind               string
+	State              string
+	Scopes             []string
+	ErrorMessage       string
+	ExpiresAt          time.Time
 }
 
 type TerminalOutput struct {

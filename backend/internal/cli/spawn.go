@@ -228,7 +228,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or the current registered repo)")
 	f.BoolVar(&opts.standalone, "standalone", false, "Spawn a projectless worker in an AO-managed plain directory (requires --agent)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, kimchi, prime-agent, autohand (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, opencode-v2, grok, droid, amp, agy, crush, cursor, qwen, gemini, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, kimchi, prime-agent, autohand, omp, fx, unreal-agent, mimo-code, deepseek-harness (default: project worker.agent; orchestrator spawns default to project orchestrator.agent; required if the project has none)")
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
 	f.StringVar(&opts.profile, "profile", "", "Role profile from the project's profiles map: its harness, agent config, environment and rules file apply to this session; --agent and --model still override it")
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")

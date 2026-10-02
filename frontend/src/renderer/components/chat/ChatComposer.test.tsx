@@ -799,6 +799,14 @@ describe("steering", () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it("offers an explicit steer action for a running Cloud turn", async () => {
+		const { onSend, onSteer, field } = renderSteerable({ showSteerButton: true });
+		await typeInComposer(field, "change course");
+		await userEvent.click(screen.getByRole("button", { name: "Steer into running turn" }));
+		await waitFor(() => expect(onSteer).toHaveBeenCalledWith("change course"));
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
 	it("steers on Ctrl+Enter, so the chord exists off macOS too", async () => {
 		const { onSend, onSteer, field } = renderSteerable();
 
@@ -1533,6 +1541,22 @@ describe("attachments", () => {
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
 			{ mimeType: "image/png", data: expect.any(String) },
 		]);
+	});
+
+	it("sends an image above the native limit by workspace path", async () => {
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/large.png"]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
+		const largeImage = png("large.png");
+		Object.defineProperty(largeImage, "size", { value: 11 * 1024 * 1024 });
+
+		fireEvent.paste(field, { clipboardData: clipboardData([largeImage]) });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+		await typeInComposer(field, "inspect this");
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/large.png");
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
 	});
 
 	it("stages non-images by path without sending them as native image blocks", async () => {

@@ -141,6 +141,7 @@ type InternalBrowserDevToolsOperation = BrowserDevToolsInput["operation"] | "tog
 
 type BrowserBoundsInput = {
 	viewId: string;
+	revision: number;
 	rect: BrowserRect;
 	visible: boolean;
 };
@@ -257,6 +258,25 @@ type BrowserWebContents = Pick<
 };
 
 type BrowserElectronSession = NonNullable<BrowserWebContents["session"]>;
+
+function canWriteBrowserClipboard(
+	webContents: Pick<WebContents, "getURL"> | null,
+	permission: string,
+	requestingUrl: string | undefined,
+	isMainFrame: boolean,
+): boolean {
+	if (permission !== "clipboard-sanitized-write" || !webContents || !requestingUrl || !isMainFrame) return false;
+	try {
+		const activeUrl = new URL(webContents.getURL());
+		const requestedUrl = new URL(requestingUrl);
+		return (
+			(requestedUrl.protocol === "http:" || requestedUrl.protocol === "https:")
+			&& requestedUrl.origin === activeUrl.origin
+		);
+	} catch {
+		return false;
+	}
+}
 
 const browserScrollbarCSS = (zoomFactor: number): string => {
 	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
@@ -393,12 +413,14 @@ type BrowserSessionEntry = {
 	rendererBounds: BrowserRect;
 	zoomFactor: number;
 	visible: boolean;
+	layoutRevision: number;
 	networkTabId?: string;
 	agentBrowserCommands: number;
 	browserOperations: number;
 	profileSwitching: boolean;
 	profileSwitchTargetId: BrowserProfileId | null;
 	nativeActiveTabId?: string;
+	snapshotDeltaBaseline?: { tabId: string; interactive: boolean; revision: number };
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
 	// Bounded browser diagnostics exposed only through an explicit errors query.
@@ -505,6 +527,15 @@ const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // address bar; workspace files arrive through the daemon's confined HTTP
 // preview origin instead.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+const TEMPORARY_BROWSER_PARTITION_PREFIX = "persist:ao-browser-temporary-";
+
+function temporaryBrowserPartition(): string {
+	return `${TEMPORARY_BROWSER_PARTITION_PREFIX}${randomUUID()}`;
+}
+
+function isTemporaryBrowserPartition(partition: string): boolean {
+	return partition.startsWith(TEMPORARY_BROWSER_PARTITION_PREFIX);
+}
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {
@@ -572,6 +603,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const viewIdsBySessionId = new Map<string, string>();
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
+	const pendingTemporaryPartitionClears = new Set<Promise<void>>();
 	const ipcDisposers: Array<() => void> = [];
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held native focus; cleared when the
@@ -662,6 +694,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				contextIsolation: true,
 				nodeIntegration: false,
 				partition: session.profilePartition,
+				// Chromium's built-in PDF viewer is plugin-backed in Electron. Keep it
+				// enabled for AO's browser surface so HTTP(S) PDFs render in-panel.
+				plugins: true,
 				preload: options.annotatePreloadPath,
 				sandbox: true,
 			},
@@ -669,8 +704,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		applyBrowserViewBounds(view, OFFSCREEN_BOUNDS, false);
 		options.mainWindow.contentView.addChildView(view);
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
-		view.webContents.session?.setPermissionCheckHandler?.(() => false);
-		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		// Main-frame sites use this permission for actions such as "Copy link".
+		// Keep embedded frames, clipboard reads, and every other permission denied.
+		view.webContents.session?.setPermissionCheckHandler?.((contents, permission, _origin, details) =>
+			canWriteBrowserClipboard(contents, permission, details.requestingUrl, details.isMainFrame),
+		);
+		view.webContents.session?.setPermissionRequestHandler?.((contents, permission, callback, details) =>
+			callback(canWriteBrowserClipboard(contents, permission, details.requestingUrl, details.isMainFrame)),
+		);
 		options.browserDownloadManager?.attach(view.webContents.session);
 		let scrollbarStyleKey: string | undefined;
 		let scrollbarStyleUpdate = Promise.resolve();
@@ -822,10 +863,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				sessionId,
 				viewId,
 				profileId,
-				// A non-persist: Electron partition is memory-only. Every tab in
-				// this worker shares it, while a fresh worker runtime receives a
-				// different partition even if a session ID is ever reused.
-				profilePartition: profileId ? browserProfilePartition(profileId) : `ao-browser-${randomUUID()}`,
+				// Temporary workers still use a persist: partition: Electron's built-in
+				// PDF viewer does not reliably render in in-memory partitions, while AO
+				// clears this session-scoped partition when the browser session ends.
+				profilePartition: profileId ? browserProfilePartition(profileId) : temporaryBrowserPartition(),
 				tabs: new Map(),
 				activeTabId: "",
 				nextTabNumber: 1,
@@ -833,6 +874,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				rendererBounds: OFFSCREEN_BOUNDS,
 				zoomFactor: 1,
 				visible: false,
+				layoutRevision: 0,
 				agentBrowserCommands: 0,
 				browserOperations: 0,
 				profileSwitching: false,
@@ -1175,6 +1217,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				agentBrowserTargets(session),
 			);
 			session.nativeActiveTabId = session.activeTabId;
+			session.snapshotDeltaBaseline = undefined;
 			return listTabs(session);
 		});
 	};
@@ -1198,6 +1241,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				return closeTab(session, tabId);
 			}
 			session.nativeActiveTabId = undefined;
+			session.snapshotDeltaBaseline = undefined;
 			await ensureNativeActiveTab(session);
 			return listTabs(session);
 		});
@@ -1472,9 +1516,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 	}
 
-	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
+	const setBounds = ({ viewId, revision, rect, visible }: BrowserBoundsInput, zoomFactor = 1): BrowserBoundsInput | undefined => {
 		const session = entries.get(viewId);
-		if (!session) return;
+		if (!session || !Number.isSafeInteger(revision) || revision <= session.layoutRevision) return;
+		session.layoutRevision = revision;
 		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 		session.zoomFactor = effectiveZoomFactor;
 		if (!visible) {
@@ -1484,7 +1529,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// Hiding the native surface (blank tab, transient measure) must not drop
 			// the browser shortcut target — the panel chrome is still the context.
 			forgetNativeFocus(viewId);
-			return;
+			return { viewId, revision, rect: session.bounds, visible: false };
 		}
 		// The renderer measures the slot in page-zoomed CSS pixels, while
 		// WebContentsView bounds are window coordinates. Convert before clamping so
@@ -1503,6 +1548,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// becomes visible. Remember that active panel too, so the DevTools shortcut
 		// still targets the browser even when the native page itself is not focused.
 		lastFocusedViewId = viewId;
+		return { viewId, revision, rect: session.bounds, visible: true };
 	};
 
 	const navigate = async ({ viewId, url }: BrowserNavigateInput): Promise<BrowserNavState> => {
@@ -1598,9 +1644,21 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
 	};
 
+	const clearTemporaryPartition = (partition: string): Promise<void> => {
+		const clearBrowserProfileData = options.clearBrowserProfileData;
+		if (!isTemporaryBrowserPartition(partition) || !clearBrowserProfileData) return Promise.resolve();
+		const cleanup = Promise.resolve().then(() => clearBrowserProfileData(partition)).catch((error) => {
+			console.warn("temporary browser profile cleanup failed:", error);
+		});
+		pendingTemporaryPartitionClears.add(cleanup);
+		void cleanup.finally(() => pendingTemporaryPartitionClears.delete(cleanup));
+		return cleanup;
+	};
+
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		const partitionToClear = session.profileId === null ? session.profilePartition : undefined;
 		session.signals.entries.length = 0;
 		unregisterBrowserSignalWatcher(session);
 		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
@@ -1619,6 +1677,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				tabsByWebContentsId.delete(entry.view.webContents.id);
 				disposeNetworkCapture(entry, "session-closed");
 			}
+			if (partitionToClear) clearTemporaryPartition(partitionToClear);
 			return;
 		}
 		for (const entry of session.tabs.values()) {
@@ -1626,6 +1685,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			disposeNetworkCapture(entry, "session-closed");
 			destroyTabView(entry);
 		}
+		if (partitionToClear) clearTemporaryPartition(partitionToClear);
 	};
 
 	const destroyTabView = (entry: BrowserEntry): void => {
@@ -1649,6 +1709,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session.activeTabId = "";
 		session.networkTabId = undefined;
 		session.nativeActiveTabId = undefined;
+		session.snapshotDeltaBaseline = undefined;
 	};
 
 	const savedTabsForSession = (session: BrowserSessionEntry): SavedBrowserTab[] =>
@@ -1771,13 +1832,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session.profileId = normalizedRequestedProfileId;
 			session.profilePartition = normalizedRequestedProfileId
 				? browserProfilePartition(normalizedRequestedProfileId)
-				: `ao-browser-${randomUUID()}`;
+				: temporaryBrowserPartition();
 			await rebuildSessionTabs(session, savedTabs, previousActiveTabId, previousNextTabNumber, assertCurrentSession);
 			registerBrowserSignalWatcher(session);
 			pushTabsState(options, session);
 			pushProfileState(session);
 			pushDevToolsState(session);
 			pushNavState(options, activeEntry(session));
+			if (previousProfileId === null) await clearTemporaryPartition(previousPartition);
 			return profileStateForSession(session);
 		} catch (error) {
 			if (bindingChanged) {
@@ -2040,7 +2102,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return pushNavState(options, activeEntry(session));
 	});
 	on("browser:setBounds", (event, input: BrowserBoundsInput) => {
-		if (isRendererOwned(event, input.viewId)) setBounds(input, event.sender.getZoomFactor());
+		if (!input || !isRendererOwned(event, input.viewId)) return;
+		const applied = setBounds(input, event.sender.getZoomFactor());
+		if (applied) event.sender.send("browser:boundsApplied", applied);
 	});
 	handle("browser:navigate", (event, input: BrowserNavigateInput) =>
 		isRendererOwned(event, input.viewId) ? navigate(input) : emptyNavState(input.viewId),
@@ -2197,6 +2261,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				return closeTab(session, input.tabId);
 			}
 			session.nativeActiveTabId = undefined;
+			session.snapshotDeltaBaseline = undefined;
 			await ensureNativeActiveTab(session);
 			return listTabs(session);
 		});
@@ -2296,6 +2361,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					if (nativeAction === "tab-new" || nativeAction === "tab-close") {
 						session.nativeActiveTabId = undefined;
 					}
+					if (nativeAction.startsWith("tab-") || nativeAction === "frame") session.snapshotDeltaBaseline = undefined;
 					if (nativeAction.startsWith("tab-")) await ensureNativeActiveTab(session, signal);
 					return result;
 				});
@@ -2307,7 +2373,40 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return agentNavState(pushNavState(options, activeEntry(session)));
 				}
 				case "snapshot": {
-					const result = await runNative(action, { interactive: Boolean(args.interactive) });
+					const interactive = Boolean(args.interactive);
+					if (args.delta === true) {
+						const tabId = session.activeTabId;
+						const baseline = session.snapshotDeltaBaseline;
+						const current =
+							baseline && baseline.tabId === tabId && baseline.interactive === interactive ? baseline : undefined;
+						const request = async (full: boolean) => {
+							const result = await runNative(action, { interactive, delta: true, ...(full ? { full: true } : {}) });
+							return { delta: parseSnapshotDelta(result.snapshot), boundary: result._boundary };
+						};
+						let full = args.full === true || !current;
+						let response = await request(full);
+						if (!full && response.delta.kind !== "full" && response.delta.baseRevision !== current?.revision) {
+							full = true;
+							response = await request(true);
+						}
+						if (full && response.delta.kind !== "full") {
+							throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot delta output was invalid");
+						}
+						// Anything that invalidated the baseline while this snapshot was in
+						// flight (a background tab closing, a profile switch) must win over
+						// a response captured before it.
+						session.snapshotDeltaBaseline =
+							session.activeTabId === tabId && session.snapshotDeltaBaseline === baseline
+								? { tabId, interactive, revision: response.delta.revision }
+								: undefined;
+						return {
+							...response.delta,
+							...(response.boundary ? { _boundary: response.boundary } : {}),
+							untrustedExternalContent: true,
+						};
+					}
+					session.snapshotDeltaBaseline = undefined;
+					const result = await runNative(action, { interactive });
 					if (typeof result.snapshot !== "string") {
 						throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
 					}
@@ -2337,13 +2436,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						}
 						return { text: result.snapshot, refs: result.refs };
 					};
-					const unresolved = (outcome: "ambiguous" | "no-match", candidates: unknown, snapshot: string) => ({
-						outcome,
-						instruction,
-						...(outcome === "ambiguous" ? { candidates } : {}),
-						snapshot,
-						untrustedExternalContent: true as const,
-					});
+					const unresolved = (outcome: "ambiguous" | "no-match", candidates: unknown, snapshot: string) => {
+						// These outcomes hand the agent a tree of their own, so a later
+						// delta must not be measured against the one it replaced.
+						session.snapshotDeltaBaseline = undefined;
+						return {
+							outcome,
+							instruction,
+							...(outcome === "ambiguous" ? { candidates } : {}),
+							snapshot,
+							untrustedExternalContent: true as const,
+						};
+					};
 
 					const snapshot1 = await snapshotOnce();
 					const match1 = matchInstruction(instruction, snapshot1.refs, { nth });
@@ -2389,6 +2493,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					}
 				}
 				case "click":
+					if (args.human === true) assertPanelPainted(session);
+					return runNative(action, {
+						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
+						...(args.human === true ? { human: true } : {}),
+					});
 				case "dblclick":
 				case "focus":
 				case "hover":
@@ -2406,9 +2515,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "press":
 					return runNative(action, { key: stringArg(args, "key", "INVALID_ARGUMENT", "key is required") });
 				case "drag":
+					if (args.human === true) assertPanelPainted(session);
 					return runNative(action, {
 						ref: stringArg(args, "ref", "REFERENCE_REQUIRED", "ref is required"),
 						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
+						...(args.human === true ? { human: true } : {}),
 					});
 				case "unhighlight":
 					return agentURLResult(await unhighlightEntry(entry));
@@ -2475,7 +2586,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 					}
 					await activeEntry(session).ready;
-					return options.agentBrowserRuntime.screenshot(sessionId, agentBrowserTargets(session), signal);
+					return options.agentBrowserRuntime.screenshot(sessionId, agentBrowserTargets(session), signal, {
+						annotate: args.annotate === true,
+					});
 				case "network-start":
 					return startNetworkCapture(
 						session,
@@ -2515,6 +2628,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					destroy(viewId);
 				}
 				if (options.browserHistoryStore) await options.browserHistoryStore.drain();
+				while (pendingTemporaryPartitionClears.size > 0) {
+					await Promise.all([...pendingTemporaryPartitionClears]);
+				}
 				await options.agentBrowserRuntime?.dispose();
 			})();
 			return disposePromise;
@@ -2714,6 +2830,41 @@ function agentTabsResult(session: BrowserSessionEntry): BrowserTabsState & { unt
 		tabs: [...session.tabs.values()].map((entry) => agentTabResult(entry, entry.tabId === session.activeTabId)),
 		untrustedExternalContent: true,
 	};
+}
+
+type SnapshotDelta =
+	| { kind: "full"; revision: number; text: string; refs: unknown }
+	| { kind: "unchanged"; revision: number; baseRevision: number }
+	| { kind: "delta"; revision: number; baseRevision: number; changes: unknown[]; treeChange: unknown };
+
+// Curved pointer movement needs painted frames: an offscreen panel would take
+// the command to the request deadline instead of failing with something the
+// agent can act on.
+function assertPanelPainted(session: BrowserSessionEntry): void {
+	if (session.visible) return;
+	throw browserError(
+		"BROWSER_PANEL_HIDDEN",
+		"Human pointer movement needs the Browser panel visible on screen. Ask the user to open it, or retry without --human.",
+	);
+}
+
+function parseSnapshotDelta(value: unknown): SnapshotDelta {
+	const invalid = () =>
+		browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot delta output was invalid");
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+	const snapshot = value as Record<string, unknown>;
+	const { kind, revision, baseRevision } = snapshot;
+	if (typeof revision !== "number" || !Number.isInteger(revision)) throw invalid();
+	if (kind === "full") {
+		if (typeof snapshot.tree !== "string") throw invalid();
+		return { kind, revision, text: snapshot.tree, refs: snapshot.refs };
+	}
+	if (typeof baseRevision !== "number" || !Number.isInteger(baseRevision)) throw invalid();
+	if (kind === "unchanged") return { kind, revision, baseRevision };
+	if (kind === "delta" && Array.isArray(snapshot.changes)) {
+		return { kind, revision, baseRevision, changes: snapshot.changes, treeChange: snapshot.treeChange };
+	}
+	throw invalid();
 }
 
 function agentNavState(state: BrowserNavState): BrowserNavState {

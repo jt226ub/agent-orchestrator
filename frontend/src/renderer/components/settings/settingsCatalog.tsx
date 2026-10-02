@@ -26,6 +26,7 @@ const UpdatesSection = lazy(async () => {
 type CatalogContext = {
 	cloudEnabled: boolean;
 	focusAgentId?: string;
+	harnessView?: "local" | "cloud";
 };
 
 export type SettingsCatalogItem = {
@@ -51,7 +52,7 @@ const globalSettingsCatalog: SettingsCatalogItem[] = [
 		id: "harness",
 		icon: Bot,
 		label: (t) => t("settings.harness"),
-		render: (_t, titleHidden, { focusAgentId }) => <HarnessSettingsSection focusAgentId={focusAgentId} titleHidden={titleHidden} />,
+		render: (_t, titleHidden, { focusAgentId, harnessView }) => <HarnessSettingsSection focusAgentId={focusAgentId} initialView={harnessView} titleHidden={titleHidden} />,
 	},
 	{
 		id: "agents",

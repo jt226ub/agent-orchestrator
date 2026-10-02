@@ -1,8 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import {
 	MAX_PROJECT_DISPLAY_NAME_LEN,
-	ProjectAgentsSettingsView,
 	ProjectGeneralSettingsView,
 	ProjectSettingsFormView,
 	ProjectSettingsSection,
@@ -11,23 +9,27 @@ import {
 } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, Info, Pencil, Plus, Trash2 } from "lucide-react";
 import type { components } from "../../api/schema";
+import { agentModelsQueryKey, agentModelsQueryOptions, refreshAgentModels, revalidateAgentModels, type AgentModelCatalog } from "../hooks/useAgentModelsQuery";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
 import { useDefaultProfilesQuery } from "../hooks/useDefaultProfilesQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { isConcreteModelID, modelChoiceLabel } from "../lib/agent-model-choices";
+import { WORKER_DEFAULT_REVIEWERS } from "../lib/reviewer-harnesses";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { OrchestratorSpawnError, spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useSettings } from "../hooks/useSettings";
 import { captureRendererEvent } from "../lib/telemetry";
 import { type OrchestratorReplacementFailure, useUiStore } from "../stores/ui-store";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { buildIntake, deriveRepoPath, deriveRepoHost, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { buildIntake, deriveRepoPath, deriveRepoHost, IntakeFields, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
-import { AgentModelField, PermissionModeSelect, buildRoleAgentConfig } from "./settings/AgentModelField";
+import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { ProfileCard, newProfileDraft, newProfileKey, nextProfileName, profileDraftsFromConfig, profilesFromDrafts, validateProfileDrafts, type ProfileDraft } from "./settings/ProfileCard";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -54,20 +56,24 @@ type TemplateDraft = {
 	orchestratorRulesFile: string;
 };
 
+const PERMISSION_MODE_VALUES = ["auto", "accept-edits", "bypass-permissions"] as const;
 const DEFAULT_BRANCH_AUTO = "auto";
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 type SettingsSaveResult = {
+	savedKey: string;
 	replacementError: string | null;
 	replacementSessionId: string | null;
 	replacementFailure: OrchestratorReplacementFailure | null;
 	spawnError: unknown;
 };
 
-export type ProjectSettingsSection = "general" | "agents" | "profiles" | "templates" | "workflow" | "intake";
+export type ProjectSettingsSection = "general" | "agents" | "profiles" | "templates";
 export type ProjectSettingsSaveState = {
 	phase: "idle" | "pending" | "saving" | "saved" | "failed";
+	dirty?: boolean;
+	requestPending?: boolean;
 	error?: string;
 	replacementError?: string;
 };
@@ -101,9 +107,7 @@ export function ProjectSettingsForm({
 			{query.isLoading ? (
 				<p className="text-sm text-settings-muted">{t("settings.project.loading")}</p>
 			) : query.isError || !query.data ? (
-				<p className="text-sm text-error">
-					{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}
-				</p>
+				<p className="text-sm text-error">{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}</p>
 			) : (
 				<SettingsBody
 					key={projectId}
@@ -137,12 +141,12 @@ function SettingsBody({
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const navigate = useNavigate();
-	const closeSettings = useUiStore((state) => state.closeSettings);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
 	const isScratchProject = project.kind === "scratch";
+	const { settings } = useSettings();
+	const intakeVisible = !isScratchProject && !!settings?.trackerIntakeEnabled;
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
@@ -176,22 +180,32 @@ function SettingsBody({
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
 	});
+	const lastSavedRef = useRef(JSON.stringify(form));
+	const failedKeyRef = useRef<string | null>(null);
+	const lastOrchestratorRef = useRef(config.orchestrator?.agent || config.profiles?.[config.orchestrator?.profile ?? ""]?.agent || "");
+	const replacementAttemptedRef = useRef(false);
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [showSaving, setShowSaving] = useState(false);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
-	const [tuningValidity, setTuningValidity] = useState({ worker: true, orchestrator: true, reviewer: true });
+	const [tuningValidity, setTuningValidity] = useState({
+		worker: true,
+		orchestrator: true,
+		reviewer: true,
+	});
 	// A role profile supplies the harness when the role names none, so a
 	// profile-driven role is not "missing" an agent (the daemon folds the
 	// profile the same way at spawn).
 	// The user's default profiles are offered wherever a project profile is,
 	// labelled as defaults; a project profile of the same name hides them.
 	const defaultProfiles = useDefaultProfilesQuery().data?.profiles ?? {};
-	const profileAgentFor = (name: string) => form.profiles.find((p) => p.name.trim() === name.trim())?.agent ?? defaultProfiles[name.trim()]?.agent ?? "";
-	const effectiveWorkerAgent = form.workerAgent || profileAgentFor(form.workerProfile);
-	const effectiveOrchestratorAgent = form.orchestratorAgent || profileAgentFor(form.orchestratorProfile);
-	const initialOrchestratorAgent =
-		config.orchestrator?.agent || config.profiles?.[config.orchestrator?.profile ?? ""]?.agent || "";
+	const profileAgentFor = (drafts: ProfileDraft[], name: string) =>
+		drafts.find((p) => p.name.trim() === name.trim())?.agent ?? defaultProfiles[name.trim()]?.agent ?? "";
+	const effectiveAgents = (values: typeof form) => ({
+		workerAgent: values.workerAgent || profileAgentFor(values.profiles, values.workerProfile),
+		orchestratorAgent: values.orchestratorAgent || profileAgentFor(values.profiles, values.orchestratorProfile),
+	});
+	const { workerAgent: effectiveWorkerAgent, orchestratorAgent: effectiveOrchestratorAgent } = effectiveAgents(form);
 	const missingRequiredAgent = effectiveWorkerAgent === "" || effectiveOrchestratorAgent === "";
 	const agentsQuery = useAgentReadinessQuery();
 	useEnsureAgentReadiness();
@@ -214,101 +228,114 @@ function SettingsBody({
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveRepoPath(project.repo);
+	const intakeSetupIncomplete = intakeVisible && intakeNeedsRule(intakeForm);
 	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);
+	const defaultReviewerHarness = WORKER_DEFAULT_REVIEWERS[form.workerAgent] ?? "claude-code";
 	const mutation = useMutation({
-		mutationFn: async () => {
-			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
-			const displayName = form.displayName.trim();
-			const {
-				model: _legacyModel,
-				mode: _legacyMode,
-				effort: _legacyEffort,
-				permissions: _legacyPermissions,
-				...sharedAgentConfig
-			} = config.agentConfig ?? {};
+		mutationFn: async (values: typeof form) => {
+			const savedKey = JSON.stringify(values);
+			void captureRendererEvent("ao.renderer.settings_save_requested", {
+				project_id: projectId,
+			});
+			const displayName = values.displayName.trim();
+			const { model: _legacyModel, mode: _legacyMode, effort: _legacyEffort, permissions: _legacyPermissions, ...sharedAgentConfig } = config.agentConfig ?? {};
 			const existingReviewer = config.reviewers?.[0];
-			const existingReviewerAgentConfig =
-				existingReviewer?.harness === form.reviewerHarness ? existingReviewer.agentConfig : undefined;
+			const existingReviewerAgentConfig = existingReviewer?.harness === values.reviewerHarness ? existingReviewer.agentConfig : undefined;
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
 						worker: {
 							...config.worker,
-							agent: form.workerAgent,
-							profile: form.workerProfile || undefined,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode, form.workerAgent === "codex" ? form.workerEffort : "", form.workerPermissions),
+							agent: values.workerAgent,
+							profile: values.workerProfile || undefined,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions),
 						},
 						orchestrator: {
 							...config.orchestrator,
-							agent: form.orchestratorAgent,
-							profile: form.orchestratorProfile || undefined,
+							agent: values.orchestratorAgent,
+							profile: values.orchestratorProfile || undefined,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
-								form.orchestratorModel,
-								form.orchestratorMode,
-								form.orchestratorAgent === "codex" ? form.orchestratorEffort : "",
-								form.orchestratorPermissions,
+								values.orchestratorModel,
+								values.orchestratorMode,
+								values.orchestratorEffort,
+								values.orchestratorPermissions,
 							),
 						},
 						agentConfig: blankToUndefined({
 							...sharedAgentConfig,
 							permissions: undefined,
 						}),
-						profiles: profilesFromDrafts(form.profiles),
-						templates: templatesFromDrafts(form.templates),
-						template: form.template || undefined,
+						profiles: profilesFromDrafts(values.profiles),
+						templates: templatesFromDrafts(values.templates),
+						template: values.template || undefined,
 					}
 				: {
 						...config,
-						defaultBranch:
-							form.defaultBranch.trim() === DEFAULT_BRANCH_AUTO
-								? undefined
-								: form.defaultBranch || undefined,
-						sessionPrefix: form.sessionPrefix || undefined,
+						defaultBranch: values.defaultBranch.trim() === DEFAULT_BRANCH_AUTO ? undefined : values.defaultBranch || undefined,
+						sessionPrefix: values.sessionPrefix || undefined,
 						worker: {
 							...config.worker,
-							agent: form.workerAgent,
-							profile: form.workerProfile || undefined,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode, form.workerAgent === "codex" ? form.workerEffort : "", form.workerPermissions),
+							agent: values.workerAgent,
+							profile: values.workerProfile || undefined,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, values.workerModel, values.workerMode, values.workerEffort, values.workerPermissions),
 						},
 						orchestrator: {
 							...config.orchestrator,
-							agent: form.orchestratorAgent,
-							profile: form.orchestratorProfile || undefined,
+							agent: values.orchestratorAgent,
+							profile: values.orchestratorProfile || undefined,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
-								form.orchestratorModel,
-								form.orchestratorMode,
-								form.orchestratorAgent === "codex" ? form.orchestratorEffort : "",
-								form.orchestratorPermissions,
+								values.orchestratorModel,
+								values.orchestratorMode,
+								values.orchestratorEffort,
+								values.orchestratorPermissions,
 							),
 						},
 						agentConfig: blankToUndefined({
 							...sharedAgentConfig,
 							permissions: undefined,
 						}),
-						profiles: profilesFromDrafts(form.profiles),
-						templates: templatesFromDrafts(form.templates),
-						template: form.template || undefined,
-						reviewers: form.reviewerHarness
-							? [{
-									harness: form.reviewerHarness,
-									agentConfig: buildRoleAgentConfig(existingReviewerAgentConfig, form.reviewerModel, form.reviewerMode, form.reviewerHarness === "codex" ? form.reviewerEffort : "", form.reviewerPermissions),
-									...(form.reviewerProfile ? { profile: form.reviewerProfile } : {}),
-								}, ...(config.reviewers ?? []).slice(1)]
+						profiles: profilesFromDrafts(values.profiles),
+						templates: templatesFromDrafts(values.templates),
+						template: values.template || undefined,
+						reviewers: values.reviewerHarness
+							? [
+									{
+										harness: values.reviewerHarness,
+										agentConfig: buildRoleAgentConfig(
+											existingReviewerAgentConfig,
+											values.reviewerModel,
+											values.reviewerMode,
+											values.reviewerEffort,
+											values.reviewerPermissions,
+										),
+										...(values.reviewerProfile ? { profile: values.reviewerProfile } : {}),
+									},
+									...(config.reviewers ?? []).slice(1),
+								]
 							: undefined,
-						trackerIntake: buildIntake(intakeForm, config.trackerIntake),
-						autoReview: form.autoReview,
+						trackerIntake: buildIntake(
+							{
+								enabled: values.intakeEnabled,
+								repo: values.intakeRepo,
+								assignee: values.intakeAssignee,
+							},
+							config.trackerIntake,
+						),
+						autoReview: values.autoReview,
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
-			if (
-				effectiveOrchestratorAgent !== initialOrchestratorAgent ||
-				(activeOrchestrator && activeOrchestrator.provider !== effectiveOrchestratorAgent)
-			) {
+			const orchestratorAgent = effectiveAgents(values).orchestratorAgent;
+			const replaceOrchestrator = orchestratorAgent !== lastOrchestratorRef.current ||
+				(Boolean(activeOrchestrator && activeOrchestrator.provider !== orchestratorAgent) && !replacementAttemptedRef.current);
+			lastOrchestratorRef.current = orchestratorAgent;
+			if (replaceOrchestrator) {
+				replacementAttemptedRef.current = true;
 				try {
 					const sessionId = await spawnOrchestrator(projectId, "settings", true);
 					return {
@@ -316,13 +343,17 @@ function SettingsBody({
 						replacementSessionId: sessionId,
 						replacementFailure: null,
 						spawnError: null,
+						savedKey,
 					} satisfies SettingsSaveResult;
 				} catch (error) {
 					const replacementFailure: OrchestratorReplacementFailure = {
-						message:
-							error instanceof Error ? error.message : t("settings.project.replaceOrchestratorFailed"),
+						message: error instanceof Error ? error.message : t("settings.project.replaceOrchestratorFailed"),
 						...(error instanceof OrchestratorSpawnError
-							? { code: error.code, requestId: error.requestId, details: error.details }
+							? {
+									code: error.code,
+									requestId: error.requestId,
+									details: error.details,
+								}
 							: {}),
 					};
 					return {
@@ -330,6 +361,7 @@ function SettingsBody({
 						replacementSessionId: null,
 						replacementFailure,
 						spawnError: error,
+						savedKey,
 					} satisfies SettingsSaveResult;
 				}
 			}
@@ -338,36 +370,30 @@ function SettingsBody({
 				replacementSessionId: null,
 				replacementFailure: null,
 				spawnError: null,
+				savedKey,
 			} satisfies SettingsSaveResult;
 		},
-		onSuccess: async (result) => {
-			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
+		onSuccess: (result) => {
+			lastSavedRef.current = result.savedKey;
+			failedKeyRef.current = null;
+			void captureRendererEvent("ao.renderer.settings_save_succeeded", {
+				project_id: projectId,
+			});
 			setSavedAt(Date.now());
 			setReplacementError(result.replacementError);
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-			const workspaceRefresh = onSaved();
-
-			if (result.replacementSessionId) {
-				await workspaceRefresh;
-				closeSettings();
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId: result.replacementSessionId },
-				});
-				return;
-			}
-
+			void onSaved();
 			if (result.replacementFailure) {
-				closeSettings();
 				setOrchestratorReplacementError(projectId, result.replacementFailure);
-				if (result.spawnError) {
-					captureOrchestratorReplacementFailure(result.spawnError, projectId);
-				}
+				if (result.spawnError) captureOrchestratorReplacementFailure(result.spawnError, projectId);
 			}
 		},
-		onError: () => {
-			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
+		onError: (_error, values) => {
+			failedKeyRef.current = JSON.stringify(values);
+			void captureRendererEvent("ao.renderer.settings_save_failed", {
+				project_id: projectId,
+			});
 		},
 	});
 
@@ -381,25 +407,70 @@ function SettingsBody({
 	}, [mutation.isPending]);
 
 	useEffect(() => {
-		const mutationError = mutation.isError
-			? mutation.error instanceof Error
-				? mutation.error.message
-				: t("settings.project.saveFailed")
-			: undefined;
+		const key = JSON.stringify(form);
+		if (key === lastSavedRef.current || key === failedKeyRef.current || mutation.isPending) return;
+		const timeout = window.setTimeout(() => {
+			const validation = validateProjectSettings(
+				{ ...form, ...effectiveAgents(form) },
+				{
+					validateIntake: intakeVisible,
+					originalDisplayName: project.name,
+				},
+			);
+			if (validation === "intake_assignee_required") {
+				setValidationError(null);
+				return;
+			}
+			const draftError = validateProfileDrafts(form.profiles, t) ?? validateTemplateDrafts(form.templates, form.profiles, t);
+			if (draftError) {
+				setValidationError(draftError);
+				return;
+			}
+			if (validation || !tuningValidity.worker || !tuningValidity.orchestrator || !tuningValidity.reviewer) {
+				setValidationError(
+					validation === "agents_required"
+						? t("settings.project.agentsRequired")
+						: validation === "name_required"
+							? t("settings.project.nameRequired")
+							: validation === "name_too_long"
+								? t("settings.project.nameTooLong", {
+										max: MAX_PROJECT_DISPLAY_NAME_LEN,
+									})
+								: t("settings.project.tuningInvalid"),
+				);
+				return;
+			}
+			setValidationError(null);
+			setSavedAt(null);
+			mutation.mutate(form);
+		}, 650);
+		return () => window.clearTimeout(timeout);
+	}, [form, isScratchProject, mutation.isPending, project.name, t, tuningValidity]);
+
+	useEffect(() => {
+		const mutationError = mutation.isError ? (mutation.error instanceof Error ? mutation.error.message : t("settings.project.saveFailed")) : undefined;
+		const hasUnsavedChanges = JSON.stringify(form) !== lastSavedRef.current;
 		onSaveState?.({
-			phase: validationError || mutationError
-				? "failed"
-				: mutation.isPending
-					? showSaving
-						? "saving"
-						: "pending"
-					: savedAt !== null
-						? "saved"
-						: "idle",
+			dirty: hasUnsavedChanges && !intakeSetupIncomplete,
+			requestPending: mutation.isPending,
+			phase:
+				validationError || mutationError
+					? "failed"
+					: mutation.isPending
+						? showSaving
+							? "saving"
+							: "pending"
+						: hasUnsavedChanges && !intakeSetupIncomplete
+							? "pending"
+							: savedAt !== null
+								? "saved"
+								: "idle",
 			error: validationError ?? mutationError,
-			replacementError: !mutation.isPending && !mutation.isError ? replacementError ?? undefined : undefined,
+			replacementError: !mutation.isPending && !mutation.isError ? (replacementError ?? undefined) : undefined,
 		});
 	}, [
+		form,
+		intakeSetupIncomplete,
 		mutation.error,
 		mutation.isError,
 		mutation.isPending,
@@ -420,16 +491,20 @@ function SettingsBody({
 	return (
 		<ProjectSettingsFormView
 			id="project-settings-form"
-				onSubmit={() => {
+			className="project-settings-form gap-5"
+			onSubmit={() => {
 				setSavedAt(null);
 				setReplacementError(null);
 				const validation = validateProjectSettings(
-					{ ...form, workerAgent: effectiveWorkerAgent, orchestratorAgent: effectiveOrchestratorAgent },
+					{ ...form, ...effectiveAgents(form) },
 					{
-						validateIntake: !isScratchProject,
+						validateIntake: intakeVisible,
 						originalDisplayName: project.name,
 					},
 				);
+				if (validation === "intake_assignee_required") {
+					return;
+				}
 				if (validation) {
 					setValidationError(
 						validation === "agents_required"
@@ -437,7 +512,9 @@ function SettingsBody({
 							: validation === "name_required"
 								? t("settings.project.nameRequired")
 								: validation === "name_too_long"
-									? t("settings.project.nameTooLong", { max: MAX_PROJECT_DISPLAY_NAME_LEN })
+									? t("settings.project.nameTooLong", {
+											max: MAX_PROJECT_DISPLAY_NAME_LEN,
+										})
 									: t("settings.project.intakeAssigneeRequired"),
 					);
 					return;
@@ -457,20 +534,21 @@ function SettingsBody({
 					return;
 				}
 				setValidationError(null);
-				mutation.mutate();
+				mutation.mutate(form);
 			}}
 		>
 			{section === "general" && (
 				<>
 					<ProjectGeneralSettingsView
 						displayName={form.displayName}
+						showTitle
 						externalLink={ProductExternalLink}
 						icons={{
 							edit: <Pencil className="settings-inline-edit-icon" aria-hidden="true" />,
 						}}
 						onDisplayNameChange={(displayName) => setForm((f) => ({ ...f, displayName }))}
 						labels={{
-							title: t("settings.project.identity"),
+							title: t("settings.project.details"),
 							name: t("settings.project.name"),
 							id: t("settings.project.id"),
 							kind: t("settings.project.kind"),
@@ -478,7 +556,9 @@ function SettingsBody({
 							repo: t("settings.project.repo"),
 							workspaceRepos: t("settings.project.workspaceRepos"),
 							workspaceReposEmpty: t("settings.project.childReposEmpty"),
-							editName: t("settings.field.edit", { label: t("settings.project.name") }),
+							editName: t("settings.field.edit", {
+								label: t("settings.project.name"),
+							}),
 						}}
 						project={{
 							id: project.id,
@@ -487,43 +567,129 @@ function SettingsBody({
 							pathHref: `file://${encodeURI(project.path)}`,
 							repo: project.repo,
 							repoHref: project.repo ? repositoryHref(project.repo) : undefined,
-							workspaceRepos: project.kind === "workspace" ? project.workspaceRepos ?? [] : undefined,
+							workspaceRepos: project.kind === "workspace" ? (project.workspaceRepos ?? []) : undefined,
 						}}
 					/>
+					{!isScratchProject && (
+						<>
+							<ProjectWorkflowSettingsView
+								branch={form.defaultBranch}
+								icons={{
+									edit: <Pencil className="settings-inline-edit-icon" aria-hidden="true" />,
+								}}
+								prefix={form.sessionPrefix}
+								onBranchChange={(defaultBranch) => setForm((f) => ({ ...f, defaultBranch }))}
+								onPrefixChange={(sessionPrefix) => setForm((f) => ({ ...f, sessionPrefix }))}
+								labels={{
+									worktrees: t("settings.project.worktrees"),
+									defaultBranch: t("settings.project.defaultBranch"),
+									sessionPrefix: t("settings.project.sessionPrefix"),
+									reviewers: t("settings.project.reviewers"),
+									defaultReviewer: t("settings.project.defaultReviewer"),
+									editDefaultBranch: t("settings.field.edit", {
+										label: t("settings.project.defaultBranch"),
+									}),
+									editSessionPrefix: t("settings.field.edit", {
+										label: t("settings.project.sessionPrefix"),
+									}),
+								}}
+							/>
+							{intakeVisible && (
+								<ProjectSettingsSection title={t("settings.project.issues")} grouped>
+									<IntakeFields
+										variant="settings"
+										form={intakeForm}
+										onChange={patchIntake}
+										repoPreview={{
+											value: effectiveIntakeRepo,
+											host: deriveRepoHost(project.repo),
+										}}
+									/>
+								</ProjectSettingsSection>
+							)}
+							<ProjectSettingsSection title={t("settings.project.pullRequests")} grouped>
+								<div className="settings-row-bar">
+									<div className="flex shrink-0 items-center gap-1.5">
+										<span className="whitespace-nowrap text-sm leading-5 text-settings-label">{t("settings.project.autoReviewToggle")}</span>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<button
+													type="button"
+													className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+													aria-label={t("settings.project.autoReviewDescription")}
+												>
+													<Info className="size-icon-sm" aria-hidden="true" />
+												</button>
+											</TooltipTrigger>
+											<TooltipContent className="max-w-72 leading-normal" side="top">
+												{t("settings.project.autoReviewDescription")}
+											</TooltipContent>
+										</Tooltip>
+									</div>
+									<div className="flex min-w-0 flex-1 items-center justify-end">
+										<Switch
+											aria-label={t("settings.project.autoReviewToggle")}
+											checked={form.autoReview}
+											id="project-auto-review"
+											onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+										/>
+									</div>
+								</div>
+							</ProjectSettingsSection>
+						</>
+					)}
 				</>
 			)}
 
 			{section === "agents" && (
-				<>
-					<ProjectAgentsSettingsView
-						title={t("settings.project.agents")}
-						workerArea={
-							<>
-								<ProfileRoleRow
-									label={t("settings.project.workerProfile")}
-									value={form.workerProfile}
-									explicitAgent={form.workerAgent}
-									profiles={form.profiles}
-									defaultProfiles={defaultProfiles}
-									agents={agentCatalog?.agents}
-									onChange={(workerProfile) => setForm((f) => ({ ...f, workerProfile }))}
-								/>
+				<ProjectSettingsSection title={t("settings.project.agents")} titleHidden grouped>
+					<ProfileRoleRow
+						label={t("settings.project.workerProfile")}
+						value={form.workerProfile}
+						explicitAgent={form.workerAgent}
+						profiles={form.profiles}
+						defaultProfiles={defaultProfiles}
+						agents={agentCatalog?.agents}
+						onChange={(workerProfile) => setForm((f) => ({ ...f, workerProfile }))}
+					/>
+					<ProfileRoleRow
+						label={t("settings.project.orchestratorProfile")}
+						value={form.orchestratorProfile}
+						explicitAgent={form.orchestratorAgent}
+						profiles={form.profiles}
+						defaultProfiles={defaultProfiles}
+						agents={agentCatalog?.agents}
+						onChange={(orchestratorProfile) => setForm((f) => ({ ...f, orchestratorProfile }))}
+					/>
+					<div className="grid grid-cols-[6rem_minmax(0,0.85fr)_minmax(0,1.25fr)] gap-3 py-2 text-xs font-medium text-settings-muted">
+						<span />
+						<span>{t("settings.project.agent")}</span>
+						<span>{t("settings.project.modelOverride")}</span>
+					</div>
+					<ProjectAgentRoleRow
+						label={t("settings.models.workerRole")}
+						agent={
 							<RequiredAgentField
 								id="workerAgent"
-								variant="settings-row"
+								variant="settings-control"
 								value={form.workerAgent}
 								placeholder={t("settings.project.selectWorker")}
 								label={t("settings.project.defaultWorker")}
 								agents={agentCatalog?.agents}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
 								invalid={validationError !== null && effectiveWorkerAgent === ""}
-								onChange={(v) =>
-									setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "", workerEffort: "" }))
+								onChange={(workerAgent) =>
+									setForm((f) => ({
+										...f,
+										workerAgent,
+										workerModel: "",
+										workerMode: "",
+										workerEffort: "",
+									}))
 								}
 							/>
-							</>
 						}
-						workerModelArea={
+						model={
 							<AgentModelField
 								role="worker"
 								agentId={form.workerAgent}
@@ -537,39 +703,31 @@ function SettingsBody({
 								onValidityChange={(valid) => setTuningValidity((value) => ({ ...value, worker: valid }))}
 							/>
 						}
-						orchestratorArea={
-							<>
-								<ProfileRoleRow
-									label={t("settings.project.orchestratorProfile")}
-									value={form.orchestratorProfile}
-									explicitAgent={form.orchestratorAgent}
-									profiles={form.profiles}
-									defaultProfiles={defaultProfiles}
-									agents={agentCatalog?.agents}
-									onChange={(orchestratorProfile) => setForm((f) => ({ ...f, orchestratorProfile }))}
-								/>
+					/>
+					<ProjectAgentRoleRow
+						label={t("settings.models.orchestratorRole")}
+						agent={
 							<RequiredAgentField
 								id="orchestratorAgent"
-								variant="settings-row"
+								variant="settings-control"
 								value={form.orchestratorAgent}
 								placeholder={t("settings.project.selectOrchestrator")}
 								label={t("settings.project.defaultOrchestrator")}
 								agents={agentCatalog?.agents}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
 								invalid={validationError !== null && effectiveOrchestratorAgent === ""}
-								onChange={(v) =>
+								onChange={(orchestratorAgent) =>
 									setForm((f) => ({
 										...f,
-										orchestratorAgent: v,
+										orchestratorAgent,
 										orchestratorModel: "",
 										orchestratorMode: "",
 										orchestratorEffort: "",
 									}))
 								}
 							/>
-							</>
 						}
-						orchestratorModelArea={
+						model={
 							<AgentModelField
 								role="orchestrator"
 								agentId={form.orchestratorAgent}
@@ -580,115 +738,95 @@ function SettingsBody({
 								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
 								onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 								onEffortChange={(orchestratorEffort) => setForm((f) => ({ ...f, orchestratorEffort }))}
-								onValidityChange={(valid) => setTuningValidity((value) => ({ ...value, orchestrator: valid }))}
-							/>
-						}
-						permissions={{
-							control: (
-								<PermissionModeSelect
-									ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.workerRole") })}
-									value={form.workerPermissions}
-									onChange={(v) => setForm((f) => ({ ...f, workerPermissions: v }))}
-								/>
-							),
-							label: t("settings.project.roleApproval", { role: t("settings.models.workerRole") }),
-						}}
-						orchestratorPermissions={{
-							control: <PermissionModeSelect ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.orchestratorRole") })} value={form.orchestratorPermissions} onChange={(v) => setForm((f) => ({ ...f, orchestratorPermissions: v }))} />,
-							label: t("settings.project.roleApproval", { role: t("settings.models.orchestratorRole") }),
-						}}
-						missingRequiredMessage={
-							missingRequiredAgent ? t("settings.project.agentsRequired") : null
-						}
-					/>
-				{!isScratchProject && (
-					<ProjectSettingsSection title={t("settings.project.reviewer")} grouped>
-						<SettingsRow label={t("settings.project.defaultReviewer")}>
-							<ReviewerSelect
-								value={form.reviewerHarness}
-								model={form.reviewerModel}
-								mode={form.reviewerMode}
-								projectId={projectId}
-								onConfigChange={(_harness, config) => setForm((f) => ({
-									...f,
-									reviewerModel: config.model ?? "",
-									reviewerMode: config.mode ?? "",
-								}))}
-								onChange={(v) =>
-								setForm((f) => ({
-									...f,
-									reviewerHarness: v,
-									...(v !== f.reviewerHarness ? {
-										reviewerModel: "", reviewerMode: "", reviewerEffort: "",
-										reviewerPermissions: "", reviewerProfile: "",
-									} : {}),
+								onValidityChange={(valid) =>
+									setTuningValidity((value) => ({
+										...value,
+										orchestrator: valid,
 									}))
 								}
-								ariaLabel={t("settings.project.defaultReviewer")}
-								agents={agentCatalog?.agents}
-								defaultOptionLabel={t("settings.project.default")}
-								defaultTriggerLabel={t("settings.project.default")}
-								disabled={agentsQuery.isFetching && agentCatalog === undefined}
 							/>
-						</SettingsRow>
-						{form.reviewerHarness ? (
-							<AgentModelField
-								role="reviewer"
-								agentId={form.reviewerHarness}
-								projectId={projectId}
-								model={form.reviewerModel}
-								mode={form.reviewerMode}
-								effort={form.reviewerEffort}
-								onModelChange={(reviewerModel) => setForm((f) => ({ ...f, reviewerModel }))}
-								onModeChange={(reviewerMode) => setForm((f) => ({ ...f, reviewerMode }))}
-								onEffortChange={(reviewerEffort) => setForm((f) => ({ ...f, reviewerEffort }))}
-								onValidityChange={(valid) => setTuningValidity((value) => ({ ...value, reviewer: valid }))}
-							/>
-						) : null}
-						<SettingsRow label={t("settings.project.roleApproval", { role: t("settings.models.reviewerRole") })}>
-							<PermissionModeSelect
-								ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.reviewerRole") })}
-								value={form.reviewerPermissions}
-								onChange={(reviewerPermissions) => setForm((f) => ({ ...f, reviewerPermissions }))}
-							/>
-						</SettingsRow>
-						{reviewerWarning && (
-							<p className="px-1 text-xs leading-row text-warning" role="status">
-								{reviewerWarning}
-							</p>
-						)}
-						<div className="settings-row-bar">
-							<div className="flex shrink-0 items-center gap-1.5">
-								<span className="whitespace-nowrap text-sm leading-5 text-settings-label">
-									{t("settings.project.autoReviewToggle")}
-								</span>
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<button
-											type="button"
-											className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-											aria-label={t("settings.project.autoReviewDescription")}
-										>
-											<Info className="size-icon-sm" aria-hidden="true" />
-										</button>
-									</TooltipTrigger>
-									<TooltipContent className="max-w-72 leading-normal" side="top">
-										{t("settings.project.autoReviewDescription")}
-									</TooltipContent>
-								</Tooltip>
-							</div>
-							<div className="flex min-w-0 flex-1 items-center justify-end">
-								<Switch
-									aria-label={t("settings.project.autoReviewToggle")}
-									checked={form.autoReview}
-									id="project-auto-review"
-									onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+						}
+					/>
+					{!isScratchProject && (
+						<ProjectAgentRoleRow
+							label={t("settings.models.reviewerRole")}
+							agent={
+								<ReviewerSelect
+									value={form.reviewerHarness}
+									model={form.reviewerModel}
+									mode={form.reviewerMode}
+									projectId={projectId}
+									harnessOnly
+									defaultHarness={defaultReviewerHarness}
+									triggerClassName="w-full"
+									onChange={(reviewerHarness) =>
+										setForm((f) => ({
+											...f,
+											reviewerHarness,
+											...(reviewerHarness !== f.reviewerHarness
+											? {
+													reviewerModel: "",
+													reviewerMode: "",
+													reviewerEffort: "",
+													reviewerPermissions: "",
+													reviewerProfile: "",
+													}
+												: {}),
+										}))
+									}
+									ariaLabel={t("settings.project.defaultReviewer")}
+									agents={agentCatalog?.agents}
+									disabled={agentsQuery.isFetching && agentCatalog === undefined}
 								/>
-							</div>
+							}
+							model={
+								<AgentModelField
+									role="reviewer"
+									agentId={form.reviewerHarness || defaultReviewerHarness}
+									projectId={projectId}
+									model={form.reviewerModel}
+									mode={form.reviewerMode}
+									effort={form.reviewerEffort}
+									onModelChange={(reviewerModel) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerModel }))}
+									onModeChange={(reviewerMode) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerMode }))}
+									onEffortChange={(reviewerEffort) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerEffort }))}
+									onValidityChange={(valid) =>
+										setTuningValidity((value) => ({
+											...value,
+											reviewer: valid,
+										}))
+									}
+								/>
+							}
+						/>
+					)}
+					<div className={isScratchProject ? "grid grid-cols-2 gap-3 border-t border-border/60 pt-4" : "grid grid-cols-3 gap-3 border-t border-border/60 pt-4"}>
+						<div className="min-w-0 space-y-1.5">
+							<span className="text-xs text-settings-muted">{t("settings.project.roleApproval", { role: t("settings.models.workerRole") })}</span>
+							<PermissionModeSelect ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.workerRole") })} value={form.workerPermissions} agentId={form.workerAgent} onChange={(workerPermissions) => setForm((f) => ({ ...f, workerPermissions }))} />
 						</div>
-					</ProjectSettingsSection>
-				)}
-				</>
+						<div className="min-w-0 space-y-1.5">
+							<span className="text-xs text-settings-muted">{t("settings.project.roleApproval", { role: t("settings.models.orchestratorRole") })}</span>
+							<PermissionModeSelect ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.orchestratorRole") })} value={form.orchestratorPermissions} agentId={form.orchestratorAgent} onChange={(orchestratorPermissions) => setForm((f) => ({ ...f, orchestratorPermissions }))} />
+						</div>
+						{!isScratchProject && (
+							<div className="min-w-0 space-y-1.5">
+								<span className="text-xs text-settings-muted">{t("settings.project.roleApproval", { role: t("settings.models.reviewerRole") })}</span>
+								<PermissionModeSelect ariaLabel={t("settings.project.roleApproval", { role: t("settings.models.reviewerRole") })} value={form.reviewerPermissions} agentId={form.reviewerHarness || defaultReviewerHarness} onChange={(reviewerPermissions) => setForm((f) => ({ ...f, reviewerHarness: f.reviewerHarness || defaultReviewerHarness, reviewerPermissions }))} />
+							</div>
+						)}
+					</div>
+					{missingRequiredAgent && (
+						<p className="px-3 pb-2 text-xs text-error" role="alert">
+							{t("settings.project.agentsRequired")}
+						</p>
+					)}
+					{reviewerWarning && (
+						<p className="px-3 pb-2 text-xs text-warning" role="status">
+							{reviewerWarning}
+						</p>
+					)}
+				</ProjectSettingsSection>
 			)}
 
 			{section === "profiles" && (
@@ -829,57 +967,175 @@ function SettingsBody({
 					</div>
 				</ProjectSettingsSection>
 			)}
-
-			{section === "workflow" && (
-				<>
-					{!isScratchProject ? (
-						<>
-							<ProjectWorkflowSettingsView
-								branch={form.defaultBranch}
-								icons={{
-									edit: <Pencil className="settings-inline-edit-icon" aria-hidden="true" />,
-								}}
-								prefix={form.sessionPrefix}
-								onBranchChange={(defaultBranch) => setForm((f) => ({ ...f, defaultBranch }))}
-								onPrefixChange={(sessionPrefix) => setForm((f) => ({ ...f, sessionPrefix }))}
-								labels={{
-									worktrees: t("settings.project.worktrees"),
-									defaultBranch: t("settings.project.defaultBranch"),
-									sessionPrefix: t("settings.project.sessionPrefix"),
-									reviewers: t("settings.project.reviewers"),
-									defaultReviewer: t("settings.project.defaultReviewer"),
-									editDefaultBranch: t("settings.field.edit", {
-										label: t("settings.project.defaultBranch"),
-									}),
-									editSessionPrefix: t("settings.field.edit", {
-										label: t("settings.project.sessionPrefix"),
-									}),
-								}}
-							/>
-						</>
-					) : (
-						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>
-					)}
-				</>
-			)}
-
-			{section === "intake" && (
-				<>
-					{!isScratchProject ? (
-						<ProjectSettingsSection title={t("settings.project.trackerIntake")} grouped>
-							<IntakeFields
-								variant="settings"
-								form={intakeForm}
-								onChange={patchIntake}
-								repoPreview={{ value: effectiveIntakeRepo, host: deriveRepoHost(project.repo) }}
-							/>
-						</ProjectSettingsSection>
-					) : (
-						<p className="px-1 text-xs text-settings-muted">{t("settings.project.trackerIntake")}</p>
-					)}
-				</>
-			)}
 		</ProjectSettingsFormView>
+	);
+}
+
+function AgentModelField({
+	role,
+	agentId,
+	projectId,
+	model,
+	mode,
+	effort,
+	onModelChange,
+	onModeChange,
+	onEffortChange,
+	onValidityChange,
+}: {
+	role: "worker" | "orchestrator" | "reviewer";
+	agentId: string;
+	projectId: string;
+	model: string;
+	mode: string;
+	effort: string;
+	onModelChange: (value: string) => void;
+	onModeChange: (value: string) => void;
+	onEffortChange: (value: string) => void;
+	onValidityChange: (valid: boolean) => void;
+}) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const revalidationQuery = useQuery({
+		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectId),
+		enabled: agentId !== "" && catalog?.refreshRecommended === true,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useEffect(() => {
+		if (revalidationQuery.data) {
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+		}
+	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	const isMode = catalog?.selectionMode === "mode";
+	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
+	const warning =
+		(revalidationQuery.isError ? (revalidationQuery.error instanceof Error ? revalidationQuery.error.message : t("settings.models.validateFailed")) : undefined) ??
+		catalog?.warning ??
+		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
+
+	if (agentId !== "" && query.isFetching && catalog === undefined) {
+		return (
+			<div className="min-w-0">
+				<span className="text-xs text-settings-muted" role="status" aria-label={t("settings.models.loading")}>
+					{t("settings.models.loading")}
+				</span>
+			</div>
+		);
+	}
+
+	if (isMode) {
+		const defaultMode = catalog.models?.find((item) => item.isDefault && isConcreteModelID(item.id))?.id;
+		const selectedMode = isConcreteModelID(mode) ? mode : "";
+		const options = (catalog.models ?? []).filter((item) => isConcreteModelID(item.id)).map((item) => ({
+			value: item.id,
+			label: modelChoiceLabel(item),
+		}));
+		return (
+			<>
+				<div className="min-w-0">
+					<div className="flex min-w-0 items-center gap-2">
+						<SettingsOptionMenu
+							aria-label={label}
+							value={selectedMode || defaultMode || ""}
+							options={options}
+							placeholder={t("settings.models.modeNotReported")}
+							action={selectedMode && !defaultMode ? { label: t("settings.models.useAgentMode"), onSelect: () => onModeChange("") } : undefined}
+							triggerClassName="w-full justify-between"
+							disabled={options.length === 0 && !(selectedMode && !defaultMode)}
+							onChange={(value) => {
+								onModeChange(value === defaultMode ? "" : value);
+								onModelChange("");
+							}}
+						/>
+					</div>
+				</div>
+				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+			</>
+		);
+	}
+
+	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
+	const refreshCatalog = async () => {
+		const refreshed = await refreshAgentModels(agentId, projectId);
+		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
+	};
+	const selectCatalogModel = (value: string) => {
+		onModelChange(value);
+		onModeChange("");
+	};
+	const selectCustomModel = (value: string) => {
+		onModelChange(value);
+		onModeChange("");
+	};
+	return (
+		<>
+			<div className="min-w-0">
+				<div className="flex min-w-0 items-center gap-2">
+					<AgentModelCombobox
+						aria-label={label}
+						value={model}
+						models={catalog?.models ?? []}
+						allowCustom={catalog?.allowCustom}
+						customModelEntry={customModelEntry}
+						agentLabel={agentId}
+						onRefresh={refreshCatalog}
+						refreshing={catalog?.refreshState === "queued" || catalog?.refreshState === "refreshing"}
+						refreshError={catalog?.refreshError}
+						retryAt={catalog?.retryAt}
+						disabled={(query.isFetching && !catalog) || agentId === ""}
+						onChange={selectCatalogModel}
+						onCustom={selectCustomModel}
+						triggerClassName="w-full justify-between"
+						compact={agentId === "codex"}
+						tuning={{
+							effort,
+							onEffortChange,
+							onValidityChange,
+							roleLabel: t(`settings.models.${role}Role`),
+						}}
+					/>
+				</div>
+			</div>
+			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+		</>
+	);
+}
+
+function ProjectAgentRoleRow({ label, agent, model }: { label: string; agent: ReactNode; model: ReactNode }) {
+	return (
+		<div className="grid min-h-16 grid-cols-[6rem_minmax(0,0.85fr)_minmax(0,1.25fr)] items-center gap-3 py-2">
+			<span className="text-sm font-medium text-settings-label">{label}</span>
+			<div className="min-w-0">{agent}</div>
+			<div className="min-w-0">{model}</div>
+		</div>
+	);
+}
+
+function PermissionModeSelect({ ariaLabel, value, agentId, onChange }: { ariaLabel: string; value: string; agentId: string; onChange: (value: string) => void }) {
+	const { t } = useTranslation();
+	const options: { value: string; label: string }[] = PERMISSION_MODE_VALUES.map((permission) => ({
+		value: permission,
+		label: permission === "accept-edits" ? t("settings.project.permissionAcceptEdits") : permission === "auto" ? t("settings.project.permissionAuto") : t("settings.project.permissionBypass"),
+	}));
+	if (agentId !== "codex") {
+		options.unshift({
+			value: "default",
+			label: agentId === "claude-code" ? t("settings.project.permissionUseClaude") : t("settings.project.permissionUseAgent"),
+		});
+	}
+	return (
+		<SettingsOptionMenu
+			aria-label={ariaLabel}
+			value={value === "default" && agentId === "codex" ? "bypass-permissions" : value || "auto"}
+			options={options}
+			placeholder={t("settings.project.permissionNotReported")}
+			triggerClassName="w-full justify-between"
+			onChange={onChange}
+		/>
 	);
 }
 
@@ -1121,13 +1377,7 @@ function repositoryHref(repository: string): string {
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
-	const {
-		defaultBranch: _defaultBranch,
-		reviewers: _reviewers,
-		autoReview: _legacyAutoReview,
-		trackerIntake: _trackerIntake,
-		...supported
-	} = config as ProjectConfig;
+	const { defaultBranch: _defaultBranch, reviewers: _reviewers, autoReview: _legacyAutoReview, trackerIntake: _trackerIntake, ...supported } = config as ProjectConfig;
 	return supported;
 }
 
@@ -1135,3 +1385,21 @@ function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
+function buildRoleAgentConfig(
+	existing: components["schemas"]["AgentConfig"] | undefined,
+	model: string,
+	mode: string,
+	effort: string,
+	permissions: string,
+): components["schemas"]["AgentConfig"] | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	if (effort) next.effort = effort;
+	else delete next.effort;
+	if (permissions) next.permissions = permissions as components["schemas"]["AgentConfig"]["permissions"];
+	else delete next.permissions;
+	return Object.keys(next).length > 0 ? next : undefined;
+}

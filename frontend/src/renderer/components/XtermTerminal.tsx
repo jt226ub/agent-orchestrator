@@ -20,7 +20,7 @@
 //    fits don't spam the PTY.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
@@ -37,6 +37,7 @@ import { aoBridge } from "../lib/bridge";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { findSessionLinks } from "../lib/session-links";
 import { isMacPlatform } from "../lib/platform";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import {
@@ -82,8 +83,12 @@ export type XtermTerminalProps = {
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/** Called once the visible xterm viewport has painted nonblank content. */
+	onVisibleContent?: () => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
+	/** Navigate a canonical ao:// session link inside the current AO window. */
+	onSessionLinkOpen?: (uri: string) => void;
 	/** Publish the positive grid after a retained terminal becomes visible. */
 	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
@@ -145,6 +150,46 @@ function preparePastedText(text: string): string {
 
 function bracketPastedText(text: string, bracketedPasteMode: boolean): string {
 	return bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+}
+
+// xterm marks physically wrapped rows (`isWrapped`) and getSelection() joins
+// them itself, but agent TUIs repaint full-screen with absolute cursor moves,
+// so their visually continuous rows never get that mark and are copied with a
+// hard newline exactly at the window edge (issue #5785). Walk the selected
+// buffer range and drop the newline between adjacent selected rows when the
+// upper row fills every column of the grid — a full-width TUI row has no line
+// end of its own. Rows xterm already merged are skipped, and a row with a
+// visible end keeps its newline.
+// ponytail: "fills the grid" is a heuristic — a genuine paragraph line that
+// happens to end at the last column joins too; buffer-level precision (what
+// getSelectionPosition gives us here) is already applied, the rest has no
+// on-screen marker to read.
+function joinVisuallyContinuousLines(term: Terminal, selection: string, columnSelection: boolean): string {
+	// xterm's column mode intentionally keeps one text line per selected buffer
+	// row, even when the upper row fills the grid. Joining those rows would
+	// change the rectangular selection into a single line.
+	if (columnSelection) return selection;
+	const range = term.getSelectionPosition();
+	if (!range) return selection;
+	const lineBreak = selection.includes("\r\n") ? "\r\n" : "\n";
+	const lines = selection.split(lineBreak);
+	const buffer = term.buffer.active;
+	let joined = lines[0] ?? "";
+	let index = 0;
+	for (let row = range.start.y + 1; row <= range.end.y; row++) {
+		// xterm already merged this row into the previous one; no text boundary here.
+		if (buffer.getLine(row)?.isWrapped) continue;
+		const text = lines[++index];
+		if (text === undefined) break;
+		const previous = buffer.getLine(row - 1);
+		// Full grid = content in the last visible cell. Read only the current grid
+		// width because xterm can retain backing cells after a resize. Null cells
+		// compose to spaces and a wide char skips its continuation cell, so this
+		// stays cell-accurate without comparing UTF-16 length to cols.
+		const continuous = !!previous && !/\s$/.test(previous.translateToString(false, 0, term.cols));
+		joined += `${continuous ? "" : lineBreak}${text}`;
+	}
+	return joined;
 }
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
@@ -374,6 +419,72 @@ function confineDragSelectionToTerminalWidth(term: Terminal): void {
 	};
 }
 
+function mapStringOffsetToBuffer(
+	term: Terminal,
+	lineIndex: number,
+	columnIndex: number,
+	stringOffset: number,
+): [number, number] | undefined {
+	const buffer = term.buffer.active;
+	const cell = buffer.getNullCell();
+	let startColumn = columnIndex;
+	while (stringOffset > 0) {
+		const line = buffer.getLine(lineIndex);
+		if (!line) return undefined;
+		for (let column = startColumn; column < line.length; column += 1) {
+			line.getCell(column, cell);
+			if (cell.getWidth() > 0) stringOffset -= cell.getChars().length || 1;
+			if (stringOffset < 0) return [lineIndex, column];
+		}
+		lineIndex += 1;
+		startColumn = 0;
+	}
+	return [lineIndex, startColumn];
+}
+
+export function sessionLinkProvider(
+	term: Terminal,
+	activate: (event: MouseEvent, uri: string) => void,
+): ILinkProvider {
+	return {
+		provideLinks(lineNumber, callback) {
+			const buffer = term.buffer.active;
+			let firstLine = lineNumber - 1;
+			while (firstLine > 0 && buffer.getLine(firstLine)?.isWrapped) firstLine -= 1;
+			const lines = [];
+			for (let line = firstLine; line < buffer.length; line += 1) {
+				if (line > firstLine && !buffer.getLine(line)?.isWrapped) break;
+				lines.push(buffer.getLine(line)?.translateToString(false) ?? "");
+			}
+			const text = lines.join("");
+			const links: ILink[] = findSessionLinks(text).flatMap((match) => {
+				const start = mapStringOffsetToBuffer(term, firstLine, 0, match.start);
+				if (!start) return [];
+				const end = mapStringOffsetToBuffer(term, start[0], start[1], match.text.length);
+				if (!end) return [];
+				const [startLine, startColumn] = start;
+				let [endLine, endColumn] = end;
+				if (endColumn === 0 && endLine > startLine) {
+					endLine -= 1;
+					endColumn = term.cols;
+				}
+				if (lineNumber - 1 < startLine || lineNumber - 1 > endLine) return [];
+				return [
+					{
+						text: match.text,
+						range: {
+							start: { x: startColumn + 1, y: startLine + 1 },
+							end: { x: endColumn, y: endLine + 1 },
+						},
+						activate: (event) => activate(event, match.text),
+					},
+				];
+			});
+			callback(links.length > 0 ? links : undefined);
+		},
+	};
+}
+
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
 	const themeStyle = useUiStore((state) => state.themeStyle);
@@ -572,6 +683,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			callbacksRef.current.onChangeFontSize?.(delta);
 		});
 		const activateLink = (event: MouseEvent, uri: string) => {
+			if (uri.startsWith("ao:")) {
+				const modifierPressed = isMacPlatform() ? event.metaKey : event.ctrlKey;
+				if (term.modes.mouseTrackingMode !== "none" && !modifierPressed) return;
+				callbacksRef.current.onSessionLinkOpen?.(uri);
+				return;
+			}
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
 			// via the main process's window-open handler. Right-click to open a web
@@ -653,11 +770,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
 		term.loadAddon(new WebLinksAddon(activateLink, { hover: trackHover, leave: clearHover }));
+		term.registerLinkProvider(sessionLinkProvider(term, activateLink));
 		const searchAddon = new SearchAddon();
 		searchAddonRef.current = searchAddon;
 		term.loadAddon(searchAddon);
 
 		term.open(host);
+		let visibleContentReported = false;
+		const reportVisibleContent = () => {
+			if (visibleContentReported || !callbacksRef.current.onVisibleContent) return;
+			const buffer = term.buffer.active;
+			for (let row = buffer.viewportY; row < buffer.viewportY + term.rows; row++) {
+				if (!buffer.getLine(row)?.translateToString(true).trim()) continue;
+				visibleContentReported = true;
+				callbacksRef.current.onVisibleContent();
+				break;
+			}
+		};
+		const visibleContentRender = term.onRender(reportVisibleContent);
+		reportVisibleContent();
 		// Browser integration tests need to wait on xterm's buffer state, not
 		// infer it from a hidden viewport element whose scrollTop can lag.
 		// Vite removes this development-only seam from packaged builds.
@@ -765,8 +896,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		scrollbarTrack?.addEventListener("pointercancel", scrollbarPointerUp);
 		scheduleScrollbarUpdate();
 
+		let columnSelectionActive = false;
+		let pendingColumnSelection: boolean | null = null;
 		const copySelection = (options?: { clipboardData?: DataTransfer | null }) => {
-			const selection = term.getSelection();
+			const selection = joinVisuallyContinuousLines(term, term.getSelection(), columnSelectionActive);
 			if (!selection) return false;
 			options?.clipboardData?.setData("text/plain", selection);
 			void aoBridge.clipboard
@@ -907,6 +1040,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				focusTerminal();
 			},
 			selectAll: () => {
+				columnSelectionActive = false;
+				pendingColumnSelection = null;
 				term.selectAll();
 				focusTerminal();
 			},
@@ -995,6 +1130,44 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 		shell.addEventListener("copy", copyInput);
 		window.addEventListener("keydown", copyShortcut, true);
+
+		// Copy on select: releasing the mouse button after a selection copies it,
+		// like every native terminal (issue #5785). xterm computes the selection
+		// continuously during mousemove and its own mouseup handler does not touch
+		// the selection, so the model is already final when pointerup fires —
+		// copying here cannot race the TUI repaint that later drops the highlight.
+		// Arming on pointerdown inside the terminal (left button only) keeps
+		// releases elsewhere in the app — context menu items, the scrollbar — from
+		// re-copying a lingering selection. Only a left-button release consumes
+		// the armed flag (an in-between right-button release must not eat the
+		// drag), and pointercancel or window blur disarms it: those never deliver
+		// the pointerup, and a stale armed flag would copy on the next unrelated
+		// click anywhere in the app.
+		let pointerSelectionArmed = false;
+		const disarmPointerSelection = () => {
+			pointerSelectionArmed = false;
+			pendingColumnSelection = null;
+		};
+		const pointerDown = (event: PointerEvent) => {
+			if (event.button !== 0) return;
+			pointerSelectionArmed = true;
+			// xterm uses Alt-drag for column selection on Windows and Linux. On
+			// macOS, Option is configured to force regular selection instead.
+			pendingColumnSelection = event.altKey && !isMacPlatform();
+		};
+		const pointerUp = (event: PointerEvent) => {
+			if (event.button !== 0) return;
+			if (!pointerSelectionArmed) return;
+			pointerSelectionArmed = false;
+			columnSelectionActive = pendingColumnSelection ?? false;
+			pendingColumnSelection = null;
+			if (!useUiStore.getState().terminalCopyOnSelect) return;
+			copySelection();
+		};
+		host.addEventListener("pointerdown", pointerDown);
+		document.addEventListener("pointerup", pointerUp);
+		document.addEventListener("pointercancel", disarmPointerSelection);
+		window.addEventListener("blur", disarmPointerSelection);
 
 		const fitTerminal = () => {
 			// Parked terminals keep their last measured box and continue parsing
@@ -1431,12 +1604,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			window.removeEventListener("resize", scheduleVisibleFit);
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
+			host.removeEventListener("pointerdown", pointerDown);
+			document.removeEventListener("pointerup", pointerUp);
+			document.removeEventListener("pointercancel", disarmPointerSelection);
+			window.removeEventListener("blur", disarmPointerSelection);
 			shell.removeEventListener("contextmenu", openContextMenu);
 			shell.removeEventListener("paste", pasteInput, true);
 			shell.removeEventListener("compositionend", compositionInput, true);
 			shell.removeEventListener("dragover", dragOverInput);
 			shell.removeEventListener("drop", dropInput);
 			contextMenuActionsRef.current = null;
+			visibleContentRender.dispose();
 			cancelActivationPreparation?.();
 			clearSuppressNativePaste();
 			if (colorSchemeReporterRef.current === reportColorScheme) colorSchemeReporterRef.current = null;

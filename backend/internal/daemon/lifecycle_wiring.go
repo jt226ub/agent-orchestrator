@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/fx/herdr"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
@@ -52,13 +53,15 @@ type lifecycleStack struct {
 	autoReviewDone <-chan struct{}
 	scmDone        <-chan struct{}
 	trackerDone    <-chan struct{}
+	herdr          *herdr.Server
+	automationDone <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
+func startLifecycle(ctx context.Context, dataDir string, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, telemetry ports.EventSink, agents ports.AgentResolver, logger *slog.Logger) *lifecycleStack {
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
@@ -72,11 +75,18 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 	go lcm.RunTurnEndRetries(ctx, lifecycle.TurnEndRetryInterval)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
+	herdrServer, err := herdr.Start(ctx, dataDir, lcm, logger)
+	if err != nil {
+		// fx treats reporting as best effort; an occupied or unavailable socket
+		// must not prevent the daemon or ordinary agent sessions from starting.
+		logger.Warn("fx Herdr listener unavailable", "error", err)
+	}
 	return &lifecycleStack{
 		LCM:           lcm,
 		runtimeReaper: rp,
 		reaperDone:    rp.Start(ctx),
 		activityDone:  activityPoller.Start(ctx),
+		herdr:         herdrServer,
 	}
 }
 
@@ -147,6 +157,9 @@ func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bo
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
+	if l.herdr != nil {
+		l.herdr.Stop()
+	}
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
@@ -159,6 +172,9 @@ func (l *lifecycleStack) Stop() {
 	}
 	if l.trackerDone != nil {
 		<-l.trackerDone
+	}
+	if l.automationDone != nil {
+		<-l.automationDone
 	}
 }
 
@@ -175,6 +191,7 @@ type sessionLifecycle interface {
 	ReconcileStartupSafety(ctx context.Context) error
 	ReconcileBackground(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	WaitBackgroundWorkers(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) (ports.SendDelivery, error)
@@ -238,7 +255,7 @@ func telemetryEmitsSpawned(cfg config.Config) bool {
 // (issue #2685). The returned service is mounted at httpd APIDeps.Sessions.
 // It also returns the manager so the caller can wire Reconcile into the boot
 // sequence.
-func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, agentReadiness ports.AgentReadinessProvider, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, reportingPolicy ports.AgentSwitchReportingPolicy, tracker ports.Tracker, codexOperationGate ports.CodexOperationGate, agyOperationGate ports.AgyOperationGate, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, notifications notificationSink, agents ports.AgentResolver, agentReadiness ports.AgentReadinessProvider, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, reportingPolicy ports.AgentSwitchReportingPolicy, tracker ports.Tracker, codexOperationGate ports.CodexOperationGate, agyOperationGate ports.AgyOperationGate, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -338,6 +355,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry),
+		reviewsvc.WithNotificationSink(notifications),
 		reviewsvc.WithCodexAccountOperationGate(codexOperationGate),
 	}
 	if scmProvider != nil {
@@ -474,6 +492,8 @@ func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.Review
 	switch snapshot.Authentication.State {
 	case domain.AgentAuthenticationAuthorized, domain.AgentAuthenticationNotApplicable:
 		return ports.AgentAuthStatusAuthorized, true, nil
+	case domain.AgentAuthenticationConfigured:
+		return ports.AgentAuthStatusConfigured, true, nil
 	case domain.AgentAuthenticationUnauthorized:
 		return ports.AgentAuthStatusUnauthorized, true, nil
 	default:
@@ -496,7 +516,7 @@ func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResol
 	}
 	resolver := agentRegistry{reg: reg}
 	if _, ok := resolver.Agent(domain.AgentHarness(defaultAgent)); !ok {
-		return nil, fmt.Errorf("configured default agent %q is not a registered adapter", defaultAgent)
+		return nil, fmt.Errorf("configured agent %q is not a registered adapter", defaultAgent)
 	}
 	ids := make([]string, 0)
 	for _, mf := range reg.Manifests() {
@@ -540,6 +560,8 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	RunBackgroundTask(context.Context, domain.AgentHarness, ports.ChatStartConfig, string) (string, error)
+	RelayUserAuthoredChatTurn(context.Context, domain.SessionID, string) (domain.ConversationTurn, error)
 	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
@@ -614,6 +636,10 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 	return c.svc.StartChat(ctx, cfg)
 }
 
+func (c chatLauncher) RunBackgroundTask(ctx context.Context, harness domain.AgentHarness, cfg ports.ChatStartConfig, prompt string) (string, error) {
+	return c.svc.RunBackgroundTask(ctx, harness, cfg, prompt)
+}
+
 func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
 	return c.svc.StartChatTurn(ctx, id, text)
 }
@@ -622,12 +648,32 @@ func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, te
 	return c.svc.RelayChatTurn(ctx, id, text)
 }
 
+func (c chatLauncher) RelayUserAuthoredChatTurn(ctx context.Context, id domain.SessionID, text string) (domain.ConversationTurn, error) {
+	return c.svc.RelayUserAuthoredChatTurn(ctx, id, text)
+}
+
 func (c chatLauncher) RelayChatTurnWithID(
 	ctx context.Context,
 	id domain.SessionID,
 	text, clientMessageID string,
 ) (domain.ConversationTurn, error) {
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
+func (c chatLauncher) QueueChatPrompt(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	turn, err := c.svc.QueueUserMessage(ctx, id, ports.ChatUserMessage{
+		Text: text,
+		// The opening prompt is the user's own task brief, whatever carries it.
+		Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		return "", err
+	}
+	return turn.ID, nil
+}
+
+func (c chatLauncher) DrainChatQueue(ctx context.Context, id domain.SessionID) error {
+	return c.svc.DrainQueued(ctx, id)
 }
 
 func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {

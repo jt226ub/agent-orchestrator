@@ -34,6 +34,10 @@ function renderWithLinkHandler(
 	);
 }
 
+function renderWithSessionLinkHandler(text: string, onSessionLinkOpen: (url: string) => void) {
+	return render(<ChatLinkProvider onSessionLinkOpen={onSessionLinkOpen}><ChatMarkdown text={text} /></ChatLinkProvider>);
+}
+
 describe("ChatMarkdown", () => {
 	it("renders headings as headings rather than literal hashes", () => {
 		render(<ChatMarkdown text={"## Findings\n\nTwo files changed."} />);
@@ -117,6 +121,64 @@ describe("ChatMarkdown", () => {
 		expect(screen.getByText("backend/service.go:42")).toHaveClass("text-markdown-code");
 	});
 
+	it("opens a known inline-code file path in Files", async () => {
+		const onFileOpen = vi.fn();
+		renderWithLinkHandler(
+			"Open `backend/service.go:42` but keep `--resume` as code.",
+			vi.fn(),
+			["backend/service.go"],
+			onFileOpen,
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Open backend/service.go in Files" }));
+
+		expect(onFileOpen).toHaveBeenCalledWith("backend/service.go");
+		expect(screen.getByText("--resume").closest("button")).toBeNull();
+	});
+
+	it("opens an absolute markdown file link in Files instead of externally", async () => {
+		const onFileOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler(
+			"See [the component](/Users/me/project/frontend/src/App.tsx:42).",
+			vi.fn(),
+			["frontend/src/App.tsx"],
+			onFileOpen,
+		);
+
+		await userEvent.click(screen.getByRole("link", { name: "the component" }));
+
+		expect(onFileOpen).toHaveBeenCalledWith("frontend/src/App.tsx");
+		expect(openExternal).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("does not nest a file-path button inside a markdown file link", () => {
+		renderWithLinkHandler(
+			"See [`frontend/src/App.tsx`](frontend/src/App.tsx).",
+			vi.fn(),
+			["frontend/src/App.tsx"],
+			vi.fn(),
+		);
+
+		const link = screen.getByRole("link", { name: "frontend/src/App.tsx" });
+		expect(link.querySelector("button")).toBeNull();
+	});
+
+	it("opens an explicit relative file link before the workspace catalog catches up", async () => {
+		const onFileOpen = vi.fn();
+		renderWithLinkHandler(
+			"See [the new file](src/generated/new-file.ts#L8).",
+			vi.fn(),
+			[],
+			onFileOpen,
+		);
+
+		await userEvent.click(screen.getByRole("link", { name: "the new file" }));
+
+		expect(onFileOpen).toHaveBeenCalledWith("src/generated/new-file.ts");
+	});
+
 	it("escapes raw HTML instead of rendering it", () => {
 		// Agent output is only as trustworthy as the files it just read, so an
 		// <img onerror> in a README must never become a live element.
@@ -190,6 +252,30 @@ describe("ChatMarkdown", () => {
 
 		expect(onFileOpen).toHaveBeenCalledWith("reports/final.html");
 		expect(onLinkOpen).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"ao://sessions/project/session",
+		"[Open session](ao://sessions/project/session)",
+	])("renders and activates a canonical session link: %s", async (text) => {
+		const onSessionLinkOpen = vi.fn();
+		renderWithSessionLinkHandler(text, onSessionLinkOpen);
+		const link = screen.getByRole("link");
+		expect(link).toHaveAttribute("href", "ao://sessions/project/session");
+		await userEvent.setup().click(link);
+		expect(onSessionLinkOpen).toHaveBeenCalledWith("ao://sessions/project/session");
+	});
+
+	it("does not auto-activate a session link while streaming", () => {
+		const onSessionLinkOpen = vi.fn();
+		render(<ChatLinkProvider onSessionLinkOpen={onSessionLinkOpen}><ChatMarkdown streaming text="ao://sessions/project/session" /></ChatLinkProvider>);
+		expect(screen.getByRole("link")).toBeInTheDocument();
+		expect(onSessionLinkOpen).not.toHaveBeenCalled();
+	});
+
+	it("leaves malformed session-like text inert", () => {
+		renderWithSessionLinkHandler("ao://sessions/project/session/kill", vi.fn());
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
 	it("opens a web link in the system browser on Option/Alt-click", () => {

@@ -61,7 +61,7 @@ import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { getApiBaseUrl } from "../../lib/api-client";
 import { isWebLink, openLinkInSystemBrowser } from "../../lib/external-link-policy";
-import { ActivityTitle, ChatMarkdown } from "./ChatMarkdown";
+import { ActivityTitle, ChatMarkdown, SessionLinkedText } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
@@ -475,6 +475,16 @@ function formatMessageTimestamp(iso: string, now = new Date()): string {
 /* -------------------------------------------------------------------------- */
 
 /** What the user typed. Right-aligned and enclosed so it reads as theirs. */
+const WORKER_REPORT_OPEN = "<ao-worker-reports>";
+const WORKER_REPORT_CLOSE = "</ao-worker-reports>";
+
+export function humanVisibleText(text: string): string {
+	if (!text.endsWith(WORKER_REPORT_CLOSE)) return text;
+	const reportStart = text.lastIndexOf(`\n\n${WORKER_REPORT_OPEN}\n`);
+	if (reportStart < 0) return text;
+	return text.slice(0, reportStart);
+}
+
 export function HumanMessage({
 	message,
 	sessionId,
@@ -526,14 +536,15 @@ export function HumanMessage({
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
 }) {
-	const { body, attachments } = stagedAttachmentParts(message.text);
+	const visibleMessageText = humanVisibleText(message.text);
+	const { body, attachments } = stagedAttachmentParts(visibleMessageText);
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
 			    the agent has not seen it, and the timeline should not imply it has. */}
 			{editing ? (
 				<HumanMessageEditor
-					text={editText ?? message.text}
+					text={editText ?? visibleMessageText}
 					content={message.content ?? []}
 					pending={editPending}
 					locked={Boolean(editRecoveryLabel)}
@@ -563,7 +574,11 @@ export function HumanMessage({
 							: "bg-raised text-foreground",
 					)}
 				>
-					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{body ? (
+						<p className="break-words whitespace-pre-wrap text-pretty">
+							<SessionLinkedText text={body} />
+						</p>
+					) : null}
 					<StagedAttachmentItems
 						paths={attachments}
 						sessionId={sessionId}
@@ -598,7 +613,7 @@ export function HumanMessage({
 							</Tooltip>
 						) : null}
 						<CopyButton
-							text={message.text}
+							text={visibleMessageText}
 							label="Copy user message"
 							compact
 							className="size-7 justify-center rounded-md px-0 py-0 transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
@@ -654,8 +669,8 @@ export function OriginMessage({ message }: { message: ConversationMessage }) {
 			{longReport && expanded ? (
 				<ChatMarkdown text={message.text} muted />
 			) : (
-				<p className={cn("text-sm leading-relaxed text-muted-foreground", longReport && "line-clamp-3")}>
-					{preview}
+				<p className={cn("whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground", longReport && "line-clamp-3")}>
+					<SessionLinkedText text={preview} />
 				</p>
 			)}
 			{longReport ? (
@@ -707,7 +722,8 @@ function BrowserAnnotationOrigin({
 										? `${item.changes.length} visual change${item.changes.length === 1 ? "" : "s"}`
 										: "Comment")}
 							</p>
-							{item.target ? <p className="truncate">{item.target}</p> : null}
+							{item.target ? <p className="truncate text-foreground">{item.target}</p> : null}
+							{item.text ? <p className="truncate">{item.text}</p> : null}
 						</div>
 					</div>
 				))}

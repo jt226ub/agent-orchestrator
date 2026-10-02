@@ -26,12 +26,20 @@ type AgentInstallJob struct {
 }
 
 type AgentModelCatalog struct {
-	AgentID       string
-	ProjectID     string
-	BinaryVersion string
-	CatalogJson   string
-	Source        string
-	FetchedAt     time.Time
+	AgentID          string
+	ProjectID        string
+	BinaryVersion    string
+	CatalogJson      string
+	Source           string
+	FetchedAt        time.Time
+	MetadataJson     string
+	InputFingerprint string
+	LastSuccessAt    sql.NullTime
+	RefreshState     string
+	RefreshError     string
+	RetryCount       int64
+	RetryAt          sql.NullTime
+	Generation       int64
 }
 
 type AgentNativeSession struct {
@@ -161,6 +169,38 @@ type AppSetting struct {
 	DefaultSessionMode domain.SessionMode
 	UpdatedAt          time.Time
 	CloudOffering      bool
+}
+
+type Automation struct {
+	ID          domain.AutomationID
+	ProjectID   domain.ProjectID
+	DisplayName string
+	Prompt      string
+	Kind        domain.SessionKind
+	Harness     domain.AgentHarness
+	RruleText   string
+	Timezone    string
+	Enabled     bool
+	NextRunAt   time.Time
+	LastRunAt   sql.NullTime
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type AutomationRun struct {
+	ID             domain.AutomationRunID
+	AutomationID   domain.AutomationID
+	ScheduledFor   time.Time
+	SessionID      *domain.SessionID
+	Status         domain.AutomationRunStatus
+	AttemptCount   int64
+	ClaimedAt      sql.NullTime
+	LeaseExpiresAt sql.NullTime
+	StartedAt      sql.NullTime
+	FinishedAt     sql.NullTime
+	ErrorMessage   sql.NullString
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type ChangeLog struct {
@@ -354,6 +394,18 @@ type ConversationTurn struct {
 	HandledByReviewID    sql.NullString
 }
 
+type Cue struct {
+	ID          domain.CueID
+	ProjectID   domain.ProjectID
+	Name        string
+	Description string
+	Type        domain.CueType
+	Command     string
+	Prompt      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type ModelUsageEvent struct {
 	ID                    int64
 	BindingID             int64
@@ -389,6 +441,7 @@ type Notification struct {
 	CreatedAt   time.Time
 	ResolvedAt  sql.NullTime
 	DismissedAt sql.NullTime
+	SourceKey   string
 }
 
 type PR struct {
@@ -506,6 +559,39 @@ type Project struct {
 	Kind          string
 }
 
+type Report struct {
+	ID                 string
+	SessionID          string
+	ProjectID          string
+	State              string
+	Note               string
+	Message            string
+	CreatedAt          time.Time
+	DeliveryState      string
+	AvailableAt        time.Time
+	SettlementDeadline sql.NullTime
+	RepeatCount        int64
+	ClaimToken         string
+	ClaimedAt          sql.NullTime
+	DeliveryAttempts   int64
+	AcknowledgedAt     sql.NullTime
+	LastError          string
+	DeliveryBatchID    string
+}
+
+type ReportOutput struct {
+	ReportID  string
+	Position  int64
+	Kind      string
+	Reference string
+	Label     string
+}
+
+type ReportWorkerInterrupt struct {
+	SessionID         string
+	LastInterruptedAt time.Time
+}
+
 type Review struct {
 	ID                     string
 	SessionID              domain.SessionID
@@ -596,6 +682,12 @@ type Session struct {
 	NativeCheckpointEvidence         string
 	LatestAssistantUpdateAt          sql.NullTime
 	NativeIdentityObservedAt         sql.NullTime
+	Effort                           string
+	ProvisionState                   domain.SessionProvisionState
+	ProvisionError                   string
+	IsTaskPreparation                bool
+	AutomationRunID                  *domain.AutomationRunID
+	AutomationLaunchCompleted        bool
 	SessionProfile                   string
 	ParentSessionID                  string
 }
@@ -646,6 +738,7 @@ type SessionWorktree struct {
 	PreservedRef string
 	State        string
 	BaseRef      string
+	CreationSha  string
 }
 
 type ShellTerminal struct {

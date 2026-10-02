@@ -97,9 +97,26 @@ standing rules are layered contract → role file → project rules → profile 
 plan. `deepseek-expert` needs `ANTHROPIC_AUTH_TOKEN` added to its environment before it can
 run; the key is deliberately not stored by the tooling.
 
-**Upgrading a database made before the 2026-09-22 upstream merge.** Upstream has since
+**Upgrading a database made before the 2026-10-02 upstream merge.** Upstream now ships
+`0150`-`0170`, including its own `0151`-`0153`, so this fork's migrations moved again, to
+`0171`-`0173`. A database from the 2026-09-22 merge records 151, 152 and 153 against the
+fork's migrations, so goose would skip upstream's `0151` (model catalog CDC), `0152`
+(session effort) and `0153` (reports). The same remedy as below applies. Quit the app, keep a
+copy of `ao.db`, then:
+
+```sql
+BEGIN;
+DELETE FROM goose_db_version WHERE version_id IN (151, 152, 153);
+INSERT INTO goose_db_version (version_id, is_applied) VALUES (171, 1), (172, 1), (173, 1);
+COMMIT;
+```
+
+Start the app: goose applies upstream's `0150`-`0170` itself (`WithAllowMissing`). A database
+older than the 2026-09-22 merge needs the step below first.
+
+**Upgrading a database made before the 2026-09-22 upstream merge.** Upstream had by then
 shipped its own `0148` (notification dismissal) and `0149` (reviewer chat conversations), so
-this fork's migrations moved to `0151`-`0153`, above every version upstream has used. goose
+this fork's migrations moved to `0151`-`0153` (since moved again to `0171`-`0173`). goose
 keys on the version number alone, so a database that still records 148, 149 and 150 against
 the fork's old migrations would skip both of upstream's -- and 0149 rebuilds the
 `conversations` table, so skipping it leaves the schema behind the code.
@@ -146,7 +163,7 @@ daemon started there inherits that session's environment (PR #9 strips the one m
 mattered, but the rest still leaks).
 
 **To go back to the stock app:** quit, move the backup from `~/.ao/staging` back to
-`/Applications`, and keep `~/.ao/data` aside (the fork's migrations 0148–0149 are unknown to
+`/Applications`, and keep `~/.ao/data` aside (the fork's migrations 0171–0173 are unknown to
 stock).
 
 **Open items:** a second Google account for a live Antigravity account switch; the Codex

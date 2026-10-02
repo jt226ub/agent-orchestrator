@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { aoBridge } from "../lib/bridge";
+import type { ProjectSettingsSection as ProjectFormSection } from "../components/ProjectSettingsForm";
 import type { TerminalTarget } from "../types/terminal";
 import type { FilesSource } from "../hooks/useSessionWorkspaceFiles";
 import {
@@ -32,17 +33,24 @@ export type GlobalSettingsSection =
 	| "updates"
 	| "help";
 
+/** Project settings pages: the project form sections plus the cues manager. */
+export type ProjectSettingsSection = ProjectFormSection | "cues";
+
 export type SettingsModal =
 	| {
 			scope: "global";
 			section?: GlobalSettingsSection;
 			focusAgentId?: string;
+			/** Which Harness page view (local or cloud logins) to open. */
+			harnessView?: "local" | "cloud";
 			/** Preserve the project form while global recovery settings is above it. */
 			returnTo?: Extract<SettingsModal, { scope: "project" }>;
 	}
 	| {
 			scope: "project";
 			projectId: string;
+			/** Page to open on, so callers can deep-link a project setting. */
+			section?: ProjectSettingsSection;
 	};
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
@@ -69,8 +77,13 @@ export type GlobalToast = {
 	body?: string;
 	tone?: "info" | "error";
 	placement?: "bottom-right" | "top-center";
+	dismissible?: boolean;
+	durationMs?: number;
+	dedupeKey?: string;
 	nonce: number;
 };
+
+export type GlobalToastOptions = Pick<GlobalToast, "tone" | "placement" | "dismissible" | "durationMs" | "dedupeKey">;
 
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
@@ -92,6 +105,8 @@ export type UiState = {
 	developerMode: boolean;
 	/** Experimental: connect to AO daemons on other machines. Default off. */
 	remoteHosts: boolean;
+	/** Copy the terminal selection to the clipboard on mouse-up, like native terminals. Default on. */
+	terminalCopyOnSelect: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	// Projects whose initial orchestrator spawn (after import/clone) is still
 	// running in the background. The board renders a progress banner and gates
@@ -137,12 +152,13 @@ export type UiState = {
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
 	setRemoteHosts: (enabled: boolean) => void;
+	setTerminalCopyOnSelect: (enabled: boolean) => void;
 	/** True while the restart-to-update confirmation is open. */
 	updateInstallPromptOpen: boolean;
 	openUpdateInstallPrompt: () => void;
 	closeUpdateInstallPrompt: () => void;
-	openGlobalSettings: (section?: GlobalSettingsSection, options?: { focusAgentId?: string; preserveProject?: boolean }) => void;
-	openProjectSettings: (projectId: string) => void;
+	openGlobalSettings: (section?: GlobalSettingsSection, options?: { focusAgentId?: string; harnessView?: "local" | "cloud"; preserveProject?: boolean }) => void;
+	openProjectSettings: (projectId: string, options?: { section?: ProjectSettingsSection }) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
@@ -167,7 +183,7 @@ export type UiState = {
 	setProjectProvisioning: (projectId: string, provisioning: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
-	showGlobalToast: (title: string, body?: string, style?: GlobalToast["tone"] | GlobalToast["placement"]) => void;
+	showGlobalToast: (title: string, body?: string, style?: GlobalToast["tone"] | GlobalToast["placement"] | GlobalToastOptions) => void;
 	dismissGlobalToast: (nonce: number) => void;
 	clearGlobalToast: () => void;
 	requestNewTask: (projectId: string) => void;
@@ -189,6 +205,7 @@ export type OrchestratorReplacementFailure = {
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
 const remoteHostsStorageKey = "ao.remoteHosts";
+const terminalCopyOnSelectStorageKey = "ao.terminalCopyOnSelect";
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -206,13 +223,23 @@ function initialRemoteHosts() {
 	return getLocalStorage()?.getItem(remoteHostsStorageKey) === "true";
 }
 
+function initialTerminalCopyOnSelect() {
+	return getLocalStorage()?.getItem(terminalCopyOnSelectStorageKey) !== "false";
+}
+
 function syncDeveloperModeToUpdater(enabled: boolean): void {
 	const request = aoBridge.updateSettings?.setMacDifferentialUpdates?.(enabled);
 	void request?.catch(() => undefined);
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
-	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
+	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
+}
+
+/** Opening a session keeps the inspector closed until the user (or a browser
+ *  reveal) opens it; read every open check through here so that default can't drift. */
+export function inspectorIsOpen(sessions: Record<string, InspectorSessionState>, sessionId: string): boolean {
+	return sessions[sessionId]?.isOpen ?? false;
 }
 
 export function sidebarIsVisible(state: Pick<UiState, "isSidebarOpen">): boolean {
@@ -239,6 +266,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	themeStyle: initialThemeStyle,
 	developerMode: initialDeveloperModeValue,
 	remoteHosts: initialRemoteHosts(),
+	terminalCopyOnSelect: initialTerminalCopyOnSelect(),
 	restartingProjectIds: new Set<string>(),
 	provisioningProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -279,6 +307,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(remoteHostsStorageKey, String(remoteHosts));
 		set({ remoteHosts });
 	},
+	setTerminalCopyOnSelect: (terminalCopyOnSelect) => {
+		getLocalStorage()?.setItem(terminalCopyOnSelectStorageKey, String(terminalCopyOnSelect));
+		set({ terminalCopyOnSelect });
+	},
 	updateInstallPromptOpen: false,
 	openUpdateInstallPrompt: () => set({ updateInstallPromptOpen: true }),
 	closeUpdateInstallPrompt: () => set({ updateInstallPromptOpen: false }),
@@ -287,6 +319,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 			scope: "global",
 			section,
 			...(options?.focusAgentId ? { focusAgentId: options.focusAgentId } : {}),
+			...(options?.harnessView ? { harnessView: options.harnessView } : {}),
 			...(options?.preserveProject && state.settingsModal?.scope === "project"
 				? { returnTo: state.settingsModal }
 				: options?.preserveProject && state.settingsModal?.scope === "global" && state.settingsModal.returnTo
@@ -294,7 +327,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 					: {}),
 		},
 	})),
-	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	openProjectSettings: (projectId, options) => set({
+		settingsModal: {
+			scope: "project",
+			projectId,
+			...(options?.section ? { section: options.section } : {}),
+		},
+	}),
 	closeSettings: () => set((state) => ({
 		settingsModal: state.settingsModal?.scope === "global" ? state.settingsModal.returnTo ?? null : null,
 	})),
@@ -456,10 +495,14 @@ export const useUiStore = create<UiState>((set, get) => ({
 	showGlobalToast: (title, body, style) =>
 		set((state) => {
 			const nonce = state.globalToastSequence + 1;
-			const tone = style === "error" || style === "info" ? style : "info";
-			const placement = style === "top-center" || style === "bottom-right" ? style : "bottom-right";
-			const toast = { title, body, tone, placement, nonce };
-			return { globalToast: toast, globalToasts: [...state.globalToasts, toast], globalToastSequence: nonce };
+			const options = typeof style === "object" ? style : undefined;
+			const tone = options?.tone ?? (style === "error" || style === "info" ? style : "info");
+			const placement = options?.placement ?? (style === "top-center" || style === "bottom-right" ? style : "bottom-right");
+			const toast = { title, body, tone, placement, nonce, ...options };
+			const globalToasts = toast.dedupeKey
+				? state.globalToasts.filter((existing) => existing.dedupeKey !== toast.dedupeKey)
+				: state.globalToasts;
+			return { globalToast: toast, globalToasts: [...globalToasts, toast], globalToastSequence: nonce };
 		}),
 	dismissGlobalToast: (nonce) =>
 		set((state) => ({

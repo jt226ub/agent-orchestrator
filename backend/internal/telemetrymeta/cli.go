@@ -33,6 +33,7 @@ var routineInternalCLICommands = []string{
 	"ao orchestrator ls",
 	"ao hooks",
 	"ao pty-host",
+	"ao unreal-provider",
 	"ao codex-login",
 	"ao claude-login",
 	"ao agy-login",
@@ -61,7 +62,7 @@ func CLIActorType(actorType, commandPath string) string {
 	case "ao session agent-switch", "ao session agent-switch ls", "ao session switch-agent":
 		return "user"
 	}
-	if normalized == "ao hooks" {
+	if normalized == "ao hooks" || normalized == "ao report" {
 		return "agent"
 	}
 	return "system"
@@ -76,11 +77,19 @@ var legacyActorlessSystemCLICommands = map[string]struct{}{
 	"ao help":                    {},
 	"ao pty-host":                {},
 	"ao start":                   {},
+	"ao unreal-provider":         {},
 }
 
 var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao agent":                  {},
 	"ao agent ls":               {},
+	"ao automation":             {},
+	"ao automation create":      {},
+	"ao automation delete":      {},
+	"ao automation get":         {},
+	"ao automation list":        {},
+	"ao automation runs":        {},
+	"ao automation update":      {},
 	"ao browser":                {},
 	"ao browser act":            {},
 	"ao browser check":          {},
@@ -125,6 +134,9 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao browser uncheck":        {},
 	"ao browser unhighlight":    {},
 	"ao browser wait":           {},
+	"ao cue":                    {},
+	"ao cue create":             {},
+	"ao cue list":               {},
 	"ao dev":                    {},
 	"ao dev import-projects":    {},
 	"ao doctor":                 {},
