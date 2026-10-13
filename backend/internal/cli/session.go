@@ -57,7 +57,14 @@ type sessionDTO struct {
 	UpdatedAt    time.Time       `json:"updatedAt"`
 	Status       string          `json:"status"`
 	Branch       string          `json:"branch,omitempty"`
+	BranchState  *branchStateDTO `json:"branchState,omitempty"`
 	PRs          []sessionPRDTO  `json:"prs"`
+}
+
+type branchStateDTO struct {
+	Commits      int    `json:"commits"`
+	RemoteBranch string `json:"remoteBranch,omitempty"`
+	Unpushed     int    `json:"unpushed"`
 }
 
 type sessionActivity struct {
@@ -94,8 +101,9 @@ type sessionResponse struct {
 }
 
 type killSessionResponse struct {
-	SessionID string `json:"sessionId"`
-	Freed     bool   `json:"freed"`
+	SessionID      string `json:"sessionId"`
+	Freed          bool   `json:"freed"`
+	CleanupPending bool   `json:"cleanupPending"`
 }
 
 type restoreSessionResponse struct {
@@ -160,6 +168,7 @@ type sessionListEntry struct {
 	ID             string          `json:"id"`
 	ProjectID      string          `json:"projectId"`
 	Role           string          `json:"role"`
+	DisplayName    string          `json:"displayName,omitempty"`
 	Status         string          `json:"status,omitempty"`
 	Activity       string          `json:"activity,omitempty"`
 	IssueID        string          `json:"issueId,omitempty"`
@@ -193,6 +202,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 		Short: "Manage agent sessions",
 	}
 	cmd.AddCommand(newSessionListCommand(ctx))
+	cmd.AddCommand(newSessionTopCommand(ctx))
 	cmd.AddCommand(newSessionGetCommand(ctx))
 	cmd.AddCommand(newSessionTailCommand(ctx))
 	cmd.AddCommand(newSessionWaitCommand(ctx))
@@ -676,6 +686,10 @@ func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id
 	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/kill", struct{}{}, &res); err != nil {
 		return err
 	}
+	if res.CleanupPending {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (workspace cleanup pending)\n", res.SessionID)
+		return err
+	}
 	if res.Freed {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed\n", res.SessionID)
 		return err
@@ -949,6 +963,7 @@ func sessionListEntries(sessions []sessionDTO, summaries map[string][]sessionPRS
 			ID:             sess.ID,
 			ProjectID:      sess.ProjectID,
 			Role:           sessionRole(sess),
+			DisplayName:    sess.DisplayName,
 			Status:         sess.Status,
 			Activity:       sess.Activity.State,
 			IssueID:        sess.IssueID,
@@ -1116,6 +1131,7 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 		{"activity", sess.Activity.State},
 		{"harness", sess.Harness},
 		{"issue", sess.IssueID},
+		{"branch", formatBranchState(sess)},
 		{"terminated", fmt.Sprintf("%t", sess.IsTerminated)},
 	}
 	for _, field := range fields {
@@ -1137,6 +1153,30 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 		}
 	}
 	return nil
+}
+
+// formatBranchState renders the daemon's observed branch facts, for example
+// "feat/x (3 commits, 1 not pushed to origin/feat/x)".
+func formatBranchState(sess sessionDTO) string {
+	state := sess.BranchState
+	if sess.Branch == "" || state == nil {
+		return sess.Branch
+	}
+	commits := fmt.Sprintf("%d commit", state.Commits)
+	if state.Commits != 1 {
+		commits += "s"
+	}
+	switch {
+	case state.RemoteBranch == "":
+		if state.Commits == 0 {
+			return fmt.Sprintf("%s (%s)", sess.Branch, commits)
+		}
+		return fmt.Sprintf("%s (%s, not pushed)", sess.Branch, commits)
+	case state.Unpushed > 0:
+		return fmt.Sprintf("%s (%s, %d not pushed to %s)", sess.Branch, commits, state.Unpushed, state.RemoteBranch)
+	default:
+		return fmt.Sprintf("%s (%s, pushed to %s)", sess.Branch, commits, state.RemoteBranch)
+	}
 }
 
 func sessionRole(sess sessionDTO) string {

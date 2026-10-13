@@ -37,6 +37,7 @@ type Launch struct {
 // construct its process. It intentionally contains no install mechanism: binary
 // ownership stays with the existing agent plugin.
 type LaunchConfig struct {
+	ReconnectOnly   bool
 	SessionID       domain.SessionID
 	DataDir         string
 	WorkspacePath   string
@@ -63,7 +64,16 @@ type Config struct {
 	// session/resume. Standing context such as a system prompt is process input,
 	// not transcript history, so a resumed native conversation must receive it
 	// again even though the provider recovers the messages itself.
+	//
+	// Only use this for extensions the provider's session handlers actually read.
+	// An agent that ignores _meta on session/new needs SessionPreamble instead.
 	SessionMeta func(LaunchConfig) map[string]any
+	// SessionPreamble returns standing context to attach to the first prompt of a
+	// session as an embedded ACP resource. It is for agents that accept no
+	// system-prompt launch flag and ignore session/new _meta, but do execute
+	// prompt content blocks. Delivered on session/new and again on session/load,
+	// because standing context is process input rather than transcript history.
+	SessionPreamble func(LaunchConfig) []acpsdk.ContentBlock
 	// SessionMode maps AO's approval vocabulary onto this ACP agent's mode ids.
 	// Empty means "leave the provider/user default unchanged".
 	SessionMode func(ports.PermissionMode) string
@@ -84,6 +94,12 @@ type Config struct {
 	// PromptResponseFailure lets a provider binding interpret its own structured
 	// terminal metadata after a nominally successful ACP prompt response.
 	PromptResponseFailure func(acpsdk.PromptResponse) error
+	// HistoryNotice reports a replayed user message chunk that the agent wrote
+	// into its own transcript. Replay starts no turn for it, so the agent's
+	// output after it stays in the turn before, as it did live.
+	HistoryNotice func(string) bool
+	// CanHibernate checks provider-owned work that outlives an ACP prompt.
+	CanHibernate func(context.Context, *acpsdk.ClientSideConnection, acpsdk.SessionId) (bool, error)
 	// EncodeProviderConversationID and DecodeProviderConversationID let a binding
 	// persist ownership metadata around an opaque provider ID while keeping the
 	// raw value on the ACP wire.
@@ -241,6 +257,26 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, err
 	}
 
+	settings := ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}
+	if err := d.openNewSession(ctx, conv, init, launchCfg, settings, additional, mcpServers); err != nil {
+		conv.discard()
+		return nil, err
+	}
+	d.logStartStage(cfg.SessionID, "total", totalStarted, nil)
+	return conv, nil
+}
+
+// openNewSession creates a provider session on an initialized connection and
+// applies the requested turn settings. The caller discards conv on error.
+func (d *Driver) openNewSession(
+	ctx context.Context,
+	conv *conversation,
+	init acpsdk.InitializeResponse,
+	launchCfg LaunchConfig,
+	settings ports.ChatTurnSettings,
+	additional []string,
+	mcpServers []acpsdk.McpServer,
+) error {
 	meta := map[string]any(nil)
 	if d.cfg.SessionMeta != nil {
 		meta = d.cfg.SessionMeta(launchCfg)
@@ -250,43 +286,47 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	sessionStarted := time.Now()
 	resp, err := conv.conn.NewSession(openCtx, acpsdk.NewSessionRequest{
 		Meta:                  meta,
-		Cwd:                   cfg.WorkspacePath,
+		Cwd:                   launchCfg.WorkspacePath,
 		AdditionalDirectories: additional,
 		McpServers:            mcpServers,
 	})
-	d.logStartStage(cfg.SessionID, "session_new", sessionStarted, err)
+	d.logStartStage(launchCfg.SessionID, "session_new", sessionStarted, err)
 	if err != nil {
-		conv.discard()
-		return nil, normalizeACPError("ACP session/new", err)
+		return normalizeACPError("ACP session/new", err)
 	}
 	if resp.SessionId == "" {
-		conv.discard()
-		return nil, errors.New("ACP session/new returned no session id")
+		return errors.New("ACP session/new returned no session id")
 	}
 	conv.start(
 		string(resp.SessionId), conversationCapabilities(d.cfg.Capabilities, init),
 		d.cfg.SessionMode, d.cfg.SessionOptions, d.cfg.PermissionPolicy,
-		cfg.Permissions, d.cfg.ValidateTurnSettings, resp.ConfigOptions,
+		settings.Approval, d.cfg.ValidateTurnSettings, resp.ConfigOptions,
 		conv.legacyWire.modelState(), resp.Modes,
 	)
 	if d.cfg.EncodeProviderConversationID != nil {
 		conv.setReportedProviderConversationID(d.cfg.EncodeProviderConversationID(string(resp.SessionId)))
 	}
+	conv.setSessionPreamble(d.sessionPreamble(launchCfg))
 	settingsStarted := time.Now()
-	err = conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions})
-	d.logStartStage(cfg.SessionID, "initial_settings", settingsStarted, err)
+	err = conv.applyTurnSettings(ctx, settings)
+	d.logStartStage(launchCfg.SessionID, "initial_settings", settingsStarted, err)
 	if err != nil {
 		// Initial model and permission mode may have been applied via launch-time
 		// flags (e.g. kimchiacp passes --model, --auto, --yolo). An agent that
 		// does not implement the runtime ACP setters returns -32601; tolerate it
 		// at session start so those bindings can still open a session.
 		if !errors.Is(err, ErrACPSetterUnsupported) {
-			conv.discard()
-			return nil, fmt.Errorf("configure ACP session: %w", err)
+			return fmt.Errorf("configure ACP session: %w", err)
 		}
 	}
-	d.logStartStage(cfg.SessionID, "total", totalStarted, nil)
-	return conv, nil
+	return nil
+}
+
+func (d *Driver) sessionPreamble(cfg LaunchConfig) []acpsdk.ContentBlock {
+	if d.cfg.SessionPreamble == nil {
+		return nil
+	}
+	return d.cfg.SessionPreamble(cfg)
 }
 
 func (d *Driver) logStartStage(sessionID domain.SessionID, stage string, started time.Time, err error) {
@@ -301,6 +341,12 @@ func (d *Driver) logStartStage(sessionID domain.SessionID, stage string, started
 		"duration", time.Since(started),
 		"outcome", outcome,
 	)
+}
+
+// Reconnect attaches to a surviving provider without launching a replacement.
+func (d *Driver) Reconnect(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
+	cfg.ReconnectOnly = true
+	return d.Resume(ctx, cfg)
 }
 
 // Resume reconnects to the stored ACP session. When the agent advertises
@@ -334,6 +380,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		Env:   cfg.Env,
 		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		ProviderScopeID: cfg.ProviderScopeID,
+		ReconnectOnly:   cfg.ReconnectOnly,
 	}
 	conv, init, live, err := d.connect(ctx, launchCfg, cfg.PrepareEnv)
 	if err != nil {
@@ -375,6 +422,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		)
 		conv.setReportedProviderConversationID(reportedProviderConversationID)
 		conv.initialPermission = ports.PermissionMode(live.InitialPermissions)
+		conv.setSessionPreamble(d.sessionPreamble(launchCfg))
 		return conv, nil
 	}
 	if !supportsSessionRestore(init) {
@@ -415,6 +463,9 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		})
 		resp, err := historyConversation.loadHistory(resumeCtx)
 		if err != nil {
+			if cfg.FreshIfMissing && !cfg.ReconnectOnly && isACPResourceNotFound(err) {
+				return d.resumeFresh(ctx, conv, init, launchCfg, cfg, additional, mcpServers)
+			}
 			conv.discard()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPLoadError("ACP session/load", err))
 		}
@@ -429,6 +480,9 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			McpServers:            mcpServers,
 		})
 		if err != nil {
+			if cfg.FreshIfMissing && !cfg.ReconnectOnly && isACPResourceNotFound(err) {
+				return d.resumeFresh(ctx, conv, init, launchCfg, cfg, additional, mcpServers)
+			}
 			conv.discard()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 		}
@@ -442,6 +496,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		conv.legacyWire.modelState(), modes,
 	)
 	conv.setReportedProviderConversationID(reportedProviderConversationID)
+	// Standing context is process input, not transcript history, so a resumed
+	// conversation must receive it again even though the provider recovers the
+	// messages itself.
+	conv.setSessionPreamble(d.sessionPreamble(launchCfg))
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}); err != nil {
 		if !errors.Is(err, ErrACPSetterUnsupported) {
 			conv.discard()
@@ -454,11 +512,38 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	return conv, nil
 }
 
+// resumeFresh opens a new provider session in place of a stored one the
+// provider reports does not exist. Only a newly spawned provider reaches it: a
+// surviving host that still holds the session is reattached before any reload.
+// The caller's FreshIfMissing asserts the stored conversation never started, so
+// no history is lost; the returned conversation reports the new id.
+func (d *Driver) resumeFresh(
+	ctx context.Context,
+	conv *conversation,
+	init acpsdk.InitializeResponse,
+	launchCfg LaunchConfig,
+	cfg ports.ChatResumeConfig,
+	additional []string,
+	mcpServers []acpsdk.McpServer,
+) (ports.ChatConversation, error) {
+	settings := ports.ChatTurnSettings{Model: cfg.Model, Effort: cfg.Effort, Approval: cfg.Permissions}
+	if err := d.openNewSession(ctx, conv, init, launchCfg, settings, additional, mcpServers); err != nil {
+		conv.discard()
+		return nil, fmt.Errorf("%w: start fresh in place of missing ACP session: %w", ports.ErrChatResumeFailed, err)
+	}
+	d.log.Info("chat: ACP session missing; started fresh",
+		"sessionID", cfg.SessionID, "harness", d.cfg.Harness)
+	return conv, nil
+}
+
 func (d *Driver) connect(
 	ctx context.Context,
 	cfg LaunchConfig,
 	prepareEnv func(context.Context) (map[string]string, error),
 ) (*conversation, acpsdk.InitializeResponse, *persistenthost.ACPState, error) {
+	if cfg.ReconnectOnly && (cfg.DataDir == "" || cfg.SessionID == "") {
+		return nil, acpsdk.InitializeResponse{}, nil, ports.ErrChatHostNotRunning
+	}
 	processStarted := time.Now()
 	proc, err := d.openProcess(ctx, cfg, prepareEnv)
 	d.logStartStage(cfg.SessionID, "process_open", processStarted, err)
@@ -481,6 +566,8 @@ func (d *Driver) initialize(
 	)
 	conv.onAuthRejected = d.cfg.OnAuthRejected
 	conv.promptResponseFailure = d.cfg.PromptResponseFailure
+	conv.hibernationCheck = d.cfg.CanHibernate
+	conv.historyNotice = d.cfg.HistoryNotice
 	if proc.reconnected {
 		state := proc.acpState
 		if state == nil || len(state.InitializeResult) == 0 || len(state.SessionResult) == 0 || state.SessionID == "" {
@@ -567,6 +654,7 @@ func (d *Driver) connectProcess(
 	hostConfig := persistenthost.Config{
 		SessionID: string(cfg.SessionID), DataDir: cfg.DataDir, Workdir: cfg.WorkspacePath,
 		Protocol: persistenthost.ProtocolACP, OwnershipFingerprint: identity,
+		ReconnectOnly: cfg.ReconnectOnly,
 		Prepare: func(prepareCtx context.Context) (persistenthost.PreparedProvider, error) {
 			if prepareEnv != nil {
 				env, err := prepareEnv(prepareCtx)
@@ -592,6 +680,9 @@ func (d *Driver) connectProcess(
 	}
 	transport, err := d.connectHost(ctx, hostConfig)
 	if err != nil {
+		if errors.Is(err, persistenthost.ErrNotRunning) {
+			return nil, ports.ErrChatHostNotRunning
+		}
 		if errors.Is(err, persistenthost.ErrOwnershipInconclusive) ||
 			errors.Is(err, persistenthost.ErrAttached) ||
 			errors.Is(err, persistenthost.ErrIncompatible) ||
@@ -670,6 +761,15 @@ func isACPAuthRequired(err error) bool {
 		return false
 	}
 	return requestErr.Code == -32000
+}
+
+// acpResourceNotFound is ACP's JSON-RPC "Resource not found" error code. A
+// session/load or session/resume for an id the agent never persisted returns it.
+const acpResourceNotFound = -32002
+
+func isACPResourceNotFound(err error) bool {
+	var requestErr *acpsdk.RequestError
+	return errors.As(err, &requestErr) && requestErr.Code == acpResourceNotFound
 }
 
 // isACPMethodNotFound reports whether err is a JSON-RPC -32601 "Method not

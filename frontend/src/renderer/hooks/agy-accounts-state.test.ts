@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgyAccountsResponse } from "./useAgyAccountsQuery";
-import { catalogFor } from "../i18n/messages";
+import { catalogFor } from "../i18n/all-messages";
 import type { AppLocale } from "../i18n/locales";
 import { agyAccountCanSwitch, agyAccountReasonCodes, agyAccountReasonKey, agyAuthenticationDisplay, agySwitchDisplay, mergeAgyAccounts } from "./agy-accounts-state";
 import type { AgyAccountSwitch } from "./useAgyAccountsQuery";

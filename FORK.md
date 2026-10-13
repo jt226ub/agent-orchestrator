@@ -97,7 +97,24 @@ standing rules are layered contract → role file → project rules → profile 
 plan. `deepseek-expert` needs `ANTHROPIC_AUTH_TOKEN` added to its environment before it can
 run; the key is deliberately not stored by the tooling.
 
-**Upgrading a database made before the 2026-10-02 upstream merge.** Upstream now ships
+**Upgrading a database made before the 2026-10-13 upstream merge.** Upstream now ships
+`0171`-`0196`, so the fork's three migrations moved a third time, to `9001`-`9003`, far
+enough above upstream's range that they should not collide again. A database from the
+2026-10-02 merge records 171, 172 and 173 against the fork's migrations, so goose would skip
+upstream's `0171`-`0173`. Quit AO (the daemon now keeps running after the window closes, so
+stop it too), keep a copy of `ao.db`, then:
+
+```sql
+BEGIN;
+DELETE FROM goose_db_version WHERE version_id IN (171, 172, 173);
+INSERT INTO goose_db_version (version_id, is_applied) VALUES (9001, 1), (9002, 1), (9003, 1);
+COMMIT;
+```
+
+Start AO: goose applies upstream's `0171`-`0196` itself (`WithAllowMissing`). An older
+database needs the steps below first, in order.
+
+**Upgrading a database made before the 2026-10-02 upstream merge.** Upstream by then shipped
 `0150`-`0170`, including its own `0151`-`0153`, so this fork's migrations moved again, to
 `0171`-`0173`. A database from the 2026-09-22 merge records 151, 152 and 153 against the
 fork's migrations, so goose would skip upstream's `0151` (model catalog CDC), `0152`
@@ -163,9 +180,24 @@ daemon started there inherits that session's environment (PR #9 strips the one m
 mattered, but the rest still leaks).
 
 **To go back to the stock app:** quit, move the backup from `~/.ao/staging` back to
-`/Applications`, and keep `~/.ao/data` aside (the fork's migrations 0171–0173 are unknown to
+`/Applications`, and keep `~/.ao/data` aside (the fork's migrations 9001–9003 are unknown to
 stock).
 
 **Open items:** a second Google account for a live Antigravity account switch; the Codex
 setup as a `codex-*` profile; the DeepSeek token; rebasing `fork/main` on upstream `main`
 (step 9 of the design note); the Kaggle TPU provider stays out of scope.
+
+**Startup relaunch (fork behaviour, from 2026-10-13).** Upstream's daemon leaves an agent
+whose process is gone stopped at startup until someone opens or resumes it
+(`checkSessionHealth`). This fork relaunches it in place instead (`startupRelaunch` in
+`session_manager/manager.go`), because a restart here is almost always an intended
+reinstall, a reboot or a power cut, and workers and orchestrators should carry on by
+themselves. A failed relaunch is retried once after 5 s; if it still fails, the session stays
+stopped and resumable, never terminated. A session with no saved native conversation is not
+relaunched.
+
+**Settings (fork behaviour, from 2026-10-13).** Upstream rebuilt project settings around a
+shared `ProjectSettingsEditor` (General, Agents). The fork's Profiles and Templates tabs live
+in `ProjectProfilesSettings.tsx`, which edits only the profile fields and saves them over the
+latest config. The role-profile pickers moved from Agents to Profiles. The Agents tab does
+not demand an agent for a role whose profile supplies one.

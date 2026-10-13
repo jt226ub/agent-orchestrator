@@ -3,8 +3,10 @@ import type {
 	BrowserAgentActivityState,
 	BrowserDevToolsPlacement,
 	BrowserDevToolsState,
+	BrowserFindState,
 	BrowserNavState,
 	BrowserRect,
+	BrowserRuntimeState,
 	BrowserTabState,
 	BrowserTabsState,
 } from "../../main/browser-view-host";
@@ -16,6 +18,7 @@ import type {
 } from "../../shared/browser-annotations";
 import type { BrowserProfileViewState } from "../../shared/browser-profiles";
 import { BROWSER_OVERLAY_CANDIDATE_SELECTOR, OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
+import { aoBridge } from "../lib/bridge";
 
 export type { BrowserNavState };
 
@@ -52,6 +55,8 @@ function sameBrowserURL(left: string, right: string): boolean {
 
 type UseBrowserViewOptions = {
 	sessionId: string;
+	/** Source daemon for preview URLs; omitted for the local daemon. */
+	origin?: { hostId: string; sessionId: string; proxyBase: string };
 	active: boolean;
 	poppedOut: boolean;
 	/**
@@ -83,6 +88,10 @@ export type BrowserViewModel = {
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
+	findState: BrowserFindState;
+	findOpenRequest: number;
+	findInPage: (query: string, forward: boolean, newSession: boolean) => Promise<void>;
+	stopFindInPage: (focusPage?: boolean) => Promise<void>;
 	tabs: BrowserTabState[];
 	activeTabId: string;
 	tabNotice: string;
@@ -100,6 +109,8 @@ export type BrowserViewModel = {
 	setDevToolsPlacement: (placement: BrowserDevToolsPlacement) => Promise<void>;
 	agentBrowserActive: boolean;
 	agentBrowserActivity: BrowserAgentActivityState | null;
+	browserRuntimeConnected: boolean | null;
+	reconnectBrowserRuntime: () => Promise<void>;
 	destroy: () => void;
 	annotationMode: boolean;
 	annotationState?: Pick<BrowserAnnotationStatePayload, "count" | "screenshotCount" | "hasDraft">;
@@ -129,13 +140,22 @@ const EMPTY_DEVTOOLS_STATE: BrowserDevToolsState = {
 	placement: "undocked",
 };
 
+const EMPTY_FIND_STATE: BrowserFindState = {
+	viewId: "",
+	tabId: "",
+	query: "",
+	activeMatchOrdinal: 0,
+	matches: 0,
+	finalUpdate: true,
+};
+
 const EMPTY_PROFILE_STATE: BrowserProfileViewState = {
 	viewId: "",
 	profileId: null,
 	temporary: true,
 };
 
-type PreviewTrigger = { revision: number | null; target: string };
+type PreviewTrigger = { revision: number | null; target: string; origin: string };
 
 // The native view survives React session switches, so remember which preview
 // trigger was already consumed for each session. This prevents switching back
@@ -166,6 +186,30 @@ let nextLayoutRevision = Math.floor(globalThis.performance?.timeOrigin ?? Date.n
 function claimLayoutRevision(): number {
 	nextLayoutRevision += 1;
 	return nextLayoutRevision;
+}
+
+// The macOS translucent window tints the shell over the vibrancy blur. The live
+// page sits below the shell, so styles.css cuts the tint out over this rect
+// rather than tinting the page. Last visible view owns the hole.
+let browserHoleOwner: string | null = null;
+
+function publishBrowserHole(viewId: string, rect: BrowserRect | null): void {
+	const root = document.documentElement;
+	// Custom properties on :root restyle the whole document, so only write them
+	// while the translucent window actually needs the hole.
+	if (rect && root.dataset.windowTranslucent !== "true") rect = null;
+	if (!rect) {
+		if (browserHoleOwner !== viewId) return;
+		browserHoleOwner = null;
+		delete root.dataset.browserHole;
+		return;
+	}
+	browserHoleOwner = viewId;
+	root.dataset.browserHole = "true";
+	root.style.setProperty("--browser-hole-x", `${rect.x}px`);
+	root.style.setProperty("--browser-hole-y", `${rect.y}px`);
+	root.style.setProperty("--browser-hole-w", `${rect.width}px`);
+	root.style.setProperty("--browser-hole-h", `${rect.height}px`);
 }
 
 // ResizeHandle.tsx sits at the inspector panel's left edge with a
@@ -226,6 +270,7 @@ function hiddenByFullscreen(node: HTMLElement): boolean {
 
 export function useBrowserView({
 	sessionId,
+	origin,
 	active,
 	poppedOut,
 	terminated,
@@ -242,11 +287,14 @@ export function useBrowserView({
 	// authoritative and browser:tabsState pushes on every nav/title event.
 	const [tabOrder, setTabOrder] = useState<string[]>([]);
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
+	const [findState, setFindState] = useState<BrowserFindState>(EMPTY_FIND_STATE);
+	const [findOpenRequest, setFindOpenRequest] = useState(0);
 	const [profileState, setProfileState] = useState<BrowserProfileViewState>(EMPTY_PROFILE_STATE);
 	const [tabNotice, setTabNotice] = useState("");
 	const [closedTabs, setClosedTabs] = useState<ClosedBrowserTab[]>([]);
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
+	const [browserRuntimeConnected, setBrowserRuntimeConnected] = useState<boolean | null>(null);
 	const [stateSessionId, setStateSessionId] = useState(sessionId);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
@@ -257,10 +305,7 @@ export function useBrowserView({
 	const appliedLayoutRevisionRef = useRef(0);
 	const settleTimerRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
-	const previewTriggerRef = useRef<{
-		revision: number | null;
-		target: string;
-	} | null>(null);
+	const previewTriggerRef = useRef<PreviewTrigger | null>(null);
 	const overlayOpenRef = useRef(false);
 	const tabNoticeTimerRef = useRef<number | null>(null);
 	const tabsStateRef = useRef(tabsState);
@@ -302,6 +347,7 @@ export function useBrowserView({
 
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
+		publishBrowserHole(id, null);
 		window.ao?.browser.setBounds({
 			viewId: id,
 			revision: claimLayoutRevision(),
@@ -336,6 +382,7 @@ export function useBrowserView({
 			rect,
 			visible: rect.width > 0 && rect.height > 0,
 		};
+		publishBrowserHole(id, payload.visible ? rect : null);
 		window.ao?.browser.setBounds(payload);
 	}, [sendHiddenBounds]);
 
@@ -421,6 +468,8 @@ export function useBrowserView({
 		// previous session could otherwise silently reapply to the new one.
 		setTabOrder([]);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
+		setFindState(EMPTY_FIND_STATE);
+		setFindOpenRequest(0);
 		setProfileState(EMPTY_PROFILE_STATE);
 		setTabNotice("");
 		// Restore this session's own Recently Closed list rather than wiping it —
@@ -475,6 +524,12 @@ export function useBrowserView({
 					if (!disposed && viewIdRef.current === tabs.viewId) setTabsState(tabs);
 				})
 				.catch(() => undefined);
+			void window.ao?.browser
+				.getFindState(state.viewId)
+				.then((find) => {
+					if (!disposed && viewIdRef.current === find.viewId) setFindState(find);
+				})
+				.catch(() => undefined);
 			scheduleSettleMeasure();
 		});
 		return () => {
@@ -503,6 +558,21 @@ export function useBrowserView({
 		return window.ao?.browser.onNavState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setNavState(state);
+		});
+	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onFindState((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setFindState(state);
+		});
+	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onFindOpen((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setFindState(state);
+			setFindOpenRequest((current) => current + 1);
 		});
 	}, []);
 
@@ -564,6 +634,23 @@ export function useBrowserView({
 			setAgentBrowserActive(state.active);
 			setAgentBrowserActivity(state);
 		});
+	}, []);
+
+	useEffect(() => {
+		let disposed = false;
+		const applyState = (state: BrowserRuntimeState) => {
+			if (!disposed) setBrowserRuntimeConnected(state.connected);
+		};
+		const unsubscribe = window.ao?.browser.onRuntimeState(applyState);
+		void window.ao?.browser.getRuntimeState().then(applyState);
+		return () => {
+			disposed = true;
+			unsubscribe?.();
+		};
+	}, []);
+
+	const reconnectBrowserRuntime = useCallback(async () => {
+		await window.ao?.browser.reconnectRuntime();
 	}, []);
 
 	useEffect(
@@ -933,6 +1020,44 @@ export function useBrowserView({
 		return withView((id) => window.ao!.browser.clear(id));
 	}, [hasNativeBrowser, withView]);
 
+	const findInPage = useCallback(
+		(query: string, forward: boolean, newSession: boolean) => {
+			if (!hasNativeBrowser) {
+				setFindState((current) => ({ ...current, query, activeMatchOrdinal: 0, matches: 0, finalUpdate: true }));
+				return Promise.resolve();
+			}
+			return withView(async (id) => {
+				const state = await window.ao!.browser.findInPage({ viewId: id, query, forward, newSession });
+				if (viewIdRef.current === state.viewId) setFindState(state);
+			});
+		},
+		[hasNativeBrowser, withView],
+	);
+
+	const stopFindInPage = useCallback(
+		(focusPage = false) => {
+			if (!hasNativeBrowser) {
+				setFindState(EMPTY_FIND_STATE);
+				return Promise.resolve();
+			}
+			return withView(async (id) => {
+				const state = await window.ao!.browser.stopFindInPage({ viewId: id, focusPage });
+				if (viewIdRef.current === state.viewId) setFindState(state);
+			});
+		},
+		[hasNativeBrowser, withView],
+	);
+
+	// Clearing or terminating a remote preview must also retire its viewer-only
+	// origin, even when the native browser view has already been destroyed.
+	useEffect(() => {
+		if (!origin || (!terminated && previewUrl?.trim())) return;
+		void aoBridge.remotes.previewUrl(origin.hostId, origin.sessionId, "").catch(() => {
+			// A disconnected proxy is already closed, so there is nothing to revoke.
+		});
+		return undefined;
+	}, [origin?.hostId, origin?.sessionId, origin?.proxyBase, previewUrl, terminated]);
+
 	// Drive the view from the daemon-set preview target. Current daemons key
 	// this on previewRevision (bumped on every `ao preview` call); older daemons
 	// did not send it, so fall back to URL changes for compatibility.
@@ -942,19 +1067,28 @@ export function useBrowserView({
 		// consume the new session's preview revision against that stale view.
 		if (!viewId || viewIdRef.current !== viewId || terminated) return;
 		const target = previewUrl?.trim() ?? "";
+		const source = origin ? `${origin.hostId}:${origin.sessionId}:${origin.proxyBase}` : "local";
 		const revision = typeof previewRevision === "number" ? previewRevision : null;
 		const previous = previewTriggerRef.current;
-		if (previous?.revision === revision && previous.target === target) return;
-		if (revision !== null && previous?.revision === revision) return;
-		const consumed: PreviewTrigger = { revision, target };
+		if (previous?.revision === revision && previous.target === target && previous.origin === source) return;
+		if (revision !== null && previous?.revision === revision && previous.origin === source) return;
+		const consumed: PreviewTrigger = { revision, target, origin: source };
 		previewTriggerRef.current = consumed;
 		if (hasNativeBrowser) consumedPreviewTriggers.set(sessionId, consumed);
 		if (target) {
-			void navigate(target);
+			let cancelled = false;
+			const resolved = origin
+				? aoBridge.remotes.previewUrl(origin.hostId, origin.sessionId, target)
+				: Promise.resolve(target);
+			void resolved.then((url) => {
+				return cancelled ? undefined : navigate(url);
+			}).catch((error) => console.warn("Unable to open browser preview", error));
+			return () => { cancelled = true; };
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, hasNativeBrowser, navigate, previewRevision, previewUrl, sessionId, terminated, viewId]);
+		return undefined;
+	}, [clear, hasNativeBrowser, navigate, origin?.hostId, origin?.sessionId, origin?.proxyBase, previewRevision, previewUrl, sessionId, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -970,6 +1104,7 @@ export function useBrowserView({
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
+		setFindState(EMPTY_FIND_STATE);
 		setClosedTabs([]);
 	}, [sendHiddenBounds]);
 
@@ -998,6 +1133,10 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
+		findState: stateBelongsToSession ? findState : EMPTY_FIND_STATE,
+		findOpenRequest: stateBelongsToSession ? findOpenRequest : 0,
+		findInPage,
+		stopFindInPage,
 		tabs: stateBelongsToSession ? tabs : [],
 		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
 		tabNotice: stateBelongsToSession ? tabNotice : "",
@@ -1015,6 +1154,8 @@ export function useBrowserView({
 		setDevToolsPlacement: (placement) => runDevtools("setPlacement", placement),
 		agentBrowserActive: stateBelongsToSession && agentBrowserActive,
 		agentBrowserActivity: stateBelongsToSession ? agentBrowserActivity : null,
+		browserRuntimeConnected,
+		reconnectBrowserRuntime,
 		destroy,
 		annotationMode,
 		annotationState,

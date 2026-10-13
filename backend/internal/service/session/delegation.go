@@ -28,16 +28,18 @@ const (
 // RequestedAgent means the spawn uses the project's worker-agent default;
 // empty Profile means the worker override's profile, if any.
 type DelegateTaskInput struct {
-	ProjectID       domain.ProjectID
-	Brief           string
-	RequestedAgent  domain.AgentHarness
-	Model           string
-	Effort          *string
-	Profile         string
-	ApprovalMode    domain.PermissionMode
-	RequestedMode   domain.SessionMode
-	Attachments     []ports.SpawnAttachment
-	TaskPreparation domain.TaskPreparationToken
+	ProjectID         domain.ProjectID
+	Brief             string
+	RequestedAgent    domain.AgentHarness
+	Model             string
+	Effort            *string
+	Profile           string
+	ApprovalMode      domain.PermissionMode
+	RequestedMode     domain.SessionMode
+	Attachments       []ports.SpawnAttachment
+	TaskPreparation   domain.TaskPreparationToken
+	ClientRequestID   string
+	ClientRequestHash string
 }
 
 // DelegateTaskOutcome identifies the spawned worker. OrchestratorID remains
@@ -67,6 +69,11 @@ func (s *Service) CancelTaskPreparation(ctx context.Context, token string) error
 // provisional display name derived from the task brief. AO then best-effort
 // refines that title through a short-lived call to the worker's resolved harness.
 func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (DelegateTaskOutcome, error) {
+	if rec, found, err := s.replayClientRequest(ctx, in.ClientRequestID, in.ClientRequestHash); err != nil {
+		return DelegateTaskOutcome{}, err
+	} else if found {
+		return DelegateTaskOutcome{WorkerID: rec.ID}, nil
+	}
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
 	}
@@ -83,12 +90,14 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 
 	effort, effortOverride := optionalTuningValue(in.Effort)
 	worker, _, _, err := s.manager.Spawn(ctx, ports.SpawnConfig{
-		ProjectID:   in.ProjectID,
-		Kind:        domain.KindWorker,
-		Harness:     in.RequestedAgent,
-		Profile:     in.Profile,
-		Prompt:      prompt,
-		DisplayName: delegatedTaskDisplayName(in.Brief),
+		ClientRequestID:   in.ClientRequestID,
+		ClientRequestHash: in.ClientRequestHash,
+		ProjectID:         in.ProjectID,
+		Kind:              domain.KindWorker,
+		Harness:           in.RequestedAgent,
+		Profile:           in.Profile,
+		Prompt:            prompt,
+		DisplayName:       delegatedTaskDisplayName(in.Brief),
 		AgentConfig: ports.AgentConfig{
 			Model:       strings.TrimSpace(in.Model),
 			Effort:      effort,
@@ -110,7 +119,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 	// The worker spawn is the commit point. Background title
 	// generation must never hold the new-task response open. A promptless worker
 	// stays idle with its provisional title until the user supplies instructions.
-	if prompt != "" {
+	if prompt != "" && !worker.ClientRequestCommitted {
 		s.refineDelegatedTaskTitleInBackground(worker.ID, in)
 	}
 	return DelegateTaskOutcome{WorkerID: worker.ID}, nil

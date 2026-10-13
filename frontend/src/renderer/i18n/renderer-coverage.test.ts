@@ -25,16 +25,16 @@ const approvedLiterals: Record<string, readonly string[]> = {
 		"https://github.com/owner/repo", "GitHub PAT",
 	],
 	"components/DaemonStartupLoader.tsx": ["Agent Orchestrator"],
-	"components/ProjectSettingsForm.tsx": [
-		"main", "ao",
-		"No workflow settings for scratch projects.",
-		"Tracker intake is not available for scratch projects.",
-		"rules/plan-flash-first.md",
-	],
+	// The template plan-file placeholder is a path example, not prose.
+	"components/ProjectProfilesSettings.tsx": ["rules/plan-flash-first.md"],
 	"components/settings/DefaultProfilesSection.tsx": ["flash-coder.md"],
 	"components/settings/ProfileCard.tsx": ["rules/flash-coder.md", "KEY=VALUE"],
+	// Technical branch/prefix examples moved with the common settings fields.
+	"components/ProjectSettingsEditor.tsx": ["auto", "ao"],
+	"components/RemoteDirectoryPicker.tsx": ["/home/you/code"],
 	"components/SessionInspector.tsx": ["PR #"],
-	"components/Sidebar.tsx": ["Agent Orchestrator", "daemon"],
+	"components/Sidebar.tsx": ["Orchestrator.inc", "daemon"],
+	"components/TitlebarNav.tsx": ["Orchestrator.inc"],
 	"components/WindowTitlebar.tsx": [
 		"Alt+F4",
 		"Ctrl+Z",
@@ -47,7 +47,7 @@ const approvedLiterals: Record<string, readonly string[]> = {
 		"Ctrl+Shift+I",
 		"Ctrl+/",
 	],
-	"components/settings/CloudCredentialsSection.tsx": ["github_pat_…"],
+	"components/settings/CoderSettingsSection.tsx": ["grep -q '^Ready' ~/.bootstrap-status"],
 	"components/settings/ConnectMobileSetup.tsx": ["tailscale ip -4"],
 	"components/settings/UpdatesSection.tsx": ["PR #"],
 };

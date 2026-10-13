@@ -23,6 +23,7 @@ var clientEventTypes = []string{
 	"scm.updated",
 	"chat.user_message",
 	"chat.assistant_delta",
+	"chat.activity",
 	"chat.turn_started",
 	"chat.turn_completed",
 	"chat.turn_interrupted",
@@ -55,10 +56,15 @@ func (s *Store) SendMessage(
 		if access.Role == "viewer" {
 			return ErrForbidden
 		}
-		var err error
+		// A message wakes a paused session, which a billed session may do
+		// only within its plan: refuse it here so the sender sees why.
+		wake, err := s.billing.forAccess(principal, access, orgID).replayOrMessageWakeTx(ctx, tx, orgID, sessionID, idempotencyKey, true)
+		if err != nil {
+			return err
+		}
 		event, err = sendMessageTx(
 			ctx, tx, orgID, sessionID, idempotencyKey, text, principal.UserID, "",
-			access.ModeCap, access.DeniedCommands, settings,
+			access.ModeCap, access.DeniedCommands, settings, wake,
 		)
 		return err
 	})
@@ -72,6 +78,11 @@ func sendMessageTx(
 	modeCap string,
 	deniedCommands []string,
 	settings domain.ChatTurnSettings,
+	// wake lets the message wake a paused sandbox. Billed sessions decide it
+	// with messageWakeTx, at the start of the transaction (it may take the
+	// organization lock); without it a paused session keeps the message
+	// queued until it is woken.
+	wake bool,
 ) (domain.ClientEvent, error) {
 	payload, err := json.Marshal(chatMessagePayload{Text: text, ChatTurnSettings: settings})
 	if err != nil {
@@ -116,8 +127,8 @@ func sendMessageTx(
 			END,
 			reconcile_after = now(), updated_at = now()
 		WHERE session_id = $1 AND org_id = $2
-			AND desired_state IN ('running', 'paused')`,
-		sessionID, orgID,
+			AND (desired_state = 'running' OR ($3 AND desired_state = 'paused'))`,
+		sessionID, orgID, wake,
 	); err != nil {
 		return domain.ClientEvent{}, err
 	}
@@ -390,7 +401,11 @@ func appendUserMessage(
 		FROM ao_terminal_sessions terminal
 		JOIN ao_sessions session
 			ON session.org_id = terminal.org_id AND session.id = terminal.session_id
-		WHERE terminal.org_id = $1 AND terminal.session_id = $2 AND terminal.kind = 'agent'
+		WHERE terminal.org_id = $1 AND terminal.session_id = $2 AND terminal.kind = 'agent' AND NOT EXISTS (
+				SELECT 1 FROM ao_review_runs review_terminal_run
+				WHERE review_terminal_run.org_id = terminal.org_id
+				  AND review_terminal_run.review_terminal_id = terminal.id
+			)
 		  AND session.interface = 'tui'
 		  AND terminal.state = 'open' AND terminal.expires_at > now()
 		  AND session.activity_state <> 'active'
@@ -411,12 +426,14 @@ func appendUserMessage(
 		if marshalErr != nil {
 			return domain.ClientEvent{}, marshalErr
 		}
-		if _, err := tx.Exec(ctx,
+		var inputRequestID string
+		if err := tx.QueryRow(ctx,
 			`INSERT INTO ao_worker_requests (
 				org_id, session_id, worker_epoch, kind, payload, expires_at
-			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '60 seconds')`,
+			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '60 seconds')
+			RETURNING id`,
 			orgID, sessionID, workerEpoch, payload,
-		); err != nil {
+		).Scan(&inputRequestID); err != nil {
 			return domain.ClientEvent{}, err
 		}
 		// A live agent terminal does not create an ao_turn. Mark the session
@@ -424,9 +441,10 @@ func appendUserMessage(
 		// is idle while the worker still has ordered terminal input pending.
 		if _, err := tx.Exec(ctx,
 			`UPDATE ao_sessions
-			SET activity_state = 'active', updated_at = now()
+			SET activity_state = 'active', activity_source_request_id = $3,
+				updated_at = now()
 			WHERE org_id = $1 AND id = $2 AND is_terminated = false`,
-			orgID, sessionID,
+			orgID, sessionID, inputRequestID,
 		); err != nil {
 			return domain.ClientEvent{}, err
 		}

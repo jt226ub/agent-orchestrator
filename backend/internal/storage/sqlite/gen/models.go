@@ -339,6 +339,10 @@ type ConversationMessage struct {
 	UpdatedAt           time.Time
 	DeliveryContentJson string
 	BranchID            string
+	ClientPayloadHash   sql.NullString
+	SenderSessionID     string
+	SenderProjectID     string
+	SenderDisplayName   string
 }
 
 type ConversationProviderEvent struct {
@@ -395,15 +399,14 @@ type ConversationTurn struct {
 }
 
 type Cue struct {
-	ID          domain.CueID
-	ProjectID   domain.ProjectID
-	Name        string
-	Description string
-	Type        domain.CueType
-	Command     string
-	Prompt      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID        domain.CueID
+	ProjectID domain.ProjectID
+	Name      string
+	Type      domain.CueType
+	Command   string
+	Prompt    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type ModelUsageEvent struct {
@@ -608,6 +611,7 @@ type Review struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 	ControllerError        string
+	IsArchived             bool
 }
 
 type ReviewRun struct {
@@ -688,8 +692,31 @@ type Session struct {
 	IsTaskPreparation                bool
 	AutomationRunID                  *domain.AutomationRunID
 	AutomationLaunchCompleted        bool
+	ClientRequestID                  string
+	ClientRequestHash                string
+	ClientRequestCommitted           bool
+	CodexActivityFacts               string
+	ClaudeActivityFacts              string
+	ProvisionSteps                   string
+	ArtifactDir                      string
+	SessionOutputType                string
+	LatestInteractionAt              sql.NullTime
+	HibernatedAt                     sql.NullTime
+	BranchState                      string
+	RequestedOutput                  string
 	SessionProfile                   string
 	ParentSessionID                  string
+}
+
+type SessionArtifactVersion struct {
+	SessionID   domain.SessionID
+	Path        string
+	Version     int64
+	Sha256      string
+	Size        int64
+	ContentType string
+	Mtime       int64
+	CreatedAt   time.Time
 }
 
 type SessionCleanupFact struct {
@@ -727,6 +754,8 @@ type SessionInterfaceTransitionMessage struct {
 	CreatedAt       time.Time
 	DeliveredAt     sql.NullTime
 	ClientMessageID string
+	SenderSessionID string
+	AuthoredByUser  bool
 }
 
 type SessionWorktree struct {
@@ -742,14 +771,15 @@ type SessionWorktree struct {
 }
 
 type ShellTerminal struct {
-	HandleID   string
-	ProjectID  *domain.ProjectID
-	WorkingDir string
-	Title      string
-	AppRunID   string
-	CreatedAt  time.Time
-	SessionID  sql.NullString
-	Transient  bool
+	HandleID                  string
+	ProjectID                 *domain.ProjectID
+	WorkingDir                string
+	Title                     string
+	AppRunID                  string
+	CreatedAt                 time.Time
+	SessionID                 sql.NullString
+	Transient                 bool
+	PreviewCapabilityVerifier string
 }
 
 type TelemetryEvent struct {

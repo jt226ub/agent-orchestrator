@@ -33,8 +33,11 @@ type APIDeps struct {
 	Automations        controllers.AutomationService
 	DesktopWorkspaces  controllers.DesktopWorkspaceService
 	Activity           controllers.ActivityRecorder
+	NativeSessions     ports.AgentNativeSessionResolver
 	UsageHooks         controllers.UsageHookRecorder
 	UsageSummary       controllers.UsageSummaryService
+	SessionMemory      controllers.SessionMemoryService
+	SessionSteps       controllers.SessionStepsReader
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
 	Notifications      controllers.NotificationService
@@ -51,16 +54,17 @@ type APIDeps struct {
 	// Settings is the daemon-owned preference surface.
 	Settings controllers.SettingsService
 	// DefaultProfiles is the user-level profiles document and the rules files.
-	DefaultProfiles     controllers.DefaultProfilesService
-	DevImport           controllers.DevImportService
-	CDC                 cdc.Source
-	Events              cdcSubscriber
-	Telemetry           ports.EventSink
-	Mobile              *controllers.MobileController
-	Browser             controllers.BrowserService
-	PreviewServer       controllers.ManagedPreviewServer
-	SessionCapabilities controllers.SessionCapabilityValidator
-	SystemChecks        controllers.SystemChecker
+	DefaultProfiles          controllers.DefaultProfilesService
+	DevImport                controllers.DevImportService
+	CDC                      cdc.Source
+	Events                   cdcSubscriber
+	Telemetry                ports.EventSink
+	Mobile                   *controllers.MobileController
+	Browser                  controllers.BrowserService
+	PreviewServer            controllers.ManagedPreviewServer
+	SessionCapabilities      controllers.SessionCapabilityValidator
+	ShellPreviewCapabilities controllers.ShellPreviewCapabilityValidator
+	SystemChecks             controllers.SystemChecker
 	// HostID is this machine's stable, machine-bound identity, served by the
 	// unauthenticated GET /api/v1/identity probe so a phone can confirm which
 	// machine answered before presenting a credential.
@@ -176,16 +180,20 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc:           deps.Sessions,
-			Activity:      deps.Activity,
-			Usage:         deps.UsageHooks,
-			Attachments:   attachmentstore.New(cfg.DataDir),
-			PreviewServer: deps.PreviewServer,
-			Capabilities:  deps.SessionCapabilities,
+			Svc:                      deps.Sessions,
+			Projects:                 deps.Projects,
+			Activity:                 deps.Activity,
+			NativeSessions:           deps.NativeSessions,
+			DataDir:                  cfg.DataDir,
+			Usage:                    deps.UsageHooks,
+			Attachments:              attachmentstore.New(cfg.DataDir),
+			PreviewServer:            deps.PreviewServer,
+			Capabilities:             deps.SessionCapabilities,
+			ShellPreviewCapabilities: deps.ShellPreviewCapabilities,
 		},
 		automations:     &controllers.AutomationsController{Svc: deps.Automations},
 		desktop:         &controllers.DesktopWorkspaceController{Svc: deps.DesktopWorkspaces},
-		usage:           &controllers.UsageController{Svc: deps.UsageSummary, Log: loggerOrDefault(log)},
+		usage:           &controllers.UsageController{Svc: deps.UsageSummary, Log: loggerOrDefault(log), Memory: deps.SessionMemory, Steps: deps.SessionSteps, Pressure: memoryPressure(deps.SessionMemory)},
 		prs:             &controllers.PRsController{Svc: deps.PRs},
 		reviews:         &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications:   &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
@@ -195,7 +203,7 @@ func newAPIWithLogger(cfg config.Config, deps APIDeps, log *slog.Logger) *API {
 		fs:              &controllers.FSController{Svc: deps.Directories},
 		shellTerms:      &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		cues:            &controllers.CuesController{Svc: deps.Cues},
-		conversations:   &controllers.ConversationsController{Svc: deps.Conversations},
+		conversations:   &controllers.ConversationsController{Svc: deps.Conversations, Renders: attachmentstore.New(cfg.DataDir)},
 		settings:        &controllers.SettingsController{Svc: deps.Settings},
 		defaultProfiles: &controllers.DefaultProfilesController{Svc: deps.DefaultProfiles},
 		dev:             &controllers.DevController{Import: deps.DevImport},
@@ -323,4 +331,13 @@ func notFoundJSON(w http.ResponseWriter, r *http.Request) {
 func methodNotAllowedJSON(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteAPIError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "METHOD_NOT_ALLOWED",
 		r.Method+" not allowed on "+r.URL.Path, nil)
+}
+
+// memoryPressure is the memory service's cheap pressure read when it offers
+// one; nil leaves the route at 501.
+func memoryPressure(svc controllers.SessionMemoryService) controllers.MemoryPressureReader {
+	if p, ok := svc.(controllers.MemoryPressureReader); ok {
+		return p
+	}
+	return nil
 }

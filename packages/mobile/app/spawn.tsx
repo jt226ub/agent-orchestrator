@@ -20,7 +20,8 @@ import { ApiError, getAgentModels, getAgents, getProject, getSettings, type Agen
 import { userFacingError } from "../lib/connectionError";
 import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
-import { resolveSpawnProject } from "../lib/projectFilter";
+import { connectedSpawnHosts, initialSpawnHostId, selectSpawnHost, spawnHostRequestIsCurrent } from "../lib/hostRoute";
+import { ALL_PROJECTS, STANDALONE_PROJECT, resolveSpawnProject } from "../lib/projectFilter";
 import { modelOverride, resolveSpawnAgent, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
 import { appendSpawnAttachments, readSpawnAttachments, type SpawnAttachment } from "../lib/spawn-attachments";
 import { SpawnComposerControls } from "../lib/spawn-composer-controls";
@@ -37,11 +38,38 @@ import { backOr } from "../lib/backNavigation";
 export { SheetErrorBoundary as ErrorBoundary } from "../lib/RouteErrorBoundary";
 
 export default function SpawnModal() {
+	return <SpawnModalContent />;
+}
+
+function SpawnModalContent() {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
-	const { projectId: routeProjectId } = useLocalSearchParams<{ projectId?: string }>();
-	const { projects, projectsKnown, activeProjectId, config, connection, unreachable, spawn } = useApp();
+	const { projectId: routeProjectId, hostId: routeHostId } = useLocalSearchParams<{ projectId?: string; hostId?: string }>();
+	const { hostStates, activeProjectId, currentHostId, configForHost, switchHost, setActiveProject, spawn } = useApp();
+	const connectedHosts = useMemo(() => connectedSpawnHosts(hostStates), [hostStates]);
+	const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+	const hostSelectionInitialized = useRef(false);
+	const catalogGeneration = useRef(0);
+	const selectedHost = hostStates.find((host) => host.hostId === selectedHostId);
+	const config = selectedHostId ? configForHost(selectedHostId) : null;
+	const projects = selectedHost?.projects ?? [];
+	const projectsKnown = selectedHost?.projectsKnown ?? false;
+	const connection = selectedHost?.connection ?? "closed";
+	const unreachable = Boolean(selectedHost && selectedHost.connection === "closed");
+	const hostOptions = useMemo(() => {
+		if (!selectedHostId || connectedHosts.some((host) => host.id === selectedHostId)) return connectedHosts;
+		const selected = hostStates.find((host) => host.hostId === selectedHostId);
+		return selected ? [{ id: selected.hostId, label: selected.name }, ...connectedHosts] : connectedHosts;
+	}, [connectedHosts, hostStates, selectedHostId]);
+
+	useEffect(() => {
+		if (hostSelectionInitialized.current) return;
+		const routed = routeHostId ? hostStates.find((host) => host.hostId === routeHostId) : undefined;
+		if ((routeHostId && routed?.loading) || (!routeHostId && connectedHosts.length === 0 && hostStates.some((host) => host.loading))) return;
+		hostSelectionInitialized.current = true;
+		setSelectedHostId(initialSpawnHostId({ routeHostId, currentHostId: currentHostId ?? undefined, hosts: connectedHosts }));
+	}, [connectedHosts, currentHostId, hostStates, routeHostId]);
 
 	const [projectId, setProjectId] = useState<string | null>(null);
 	const [harness, setHarness] = useState("");
@@ -62,6 +90,7 @@ export default function SpawnModal() {
 	const [modelError, setModelError] = useState<string>();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const requestRef = useRef<{ payload: string; attachments: readonly SpawnAttachment[]; id: string } | undefined>(undefined);
 
 	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -81,27 +110,28 @@ export default function SpawnModal() {
 
 
 
-	// Seed from the active project, or the only project. Mirrors the store's
-	// `targetProject()`; kept here because the screen needs it as UI state to
-	// drive the picker's value and the button's disabled state.
+	// Seed from this machine's routed project, or the selected machine's active
+	// project. A project id is never carried across machines.
 	useEffect(() => {
 		const nextProjectId = resolveSpawnProject(
 			projectId,
-			routeProjectId,
-			activeProjectId,
+			routeHostId === selectedHostId ? routeProjectId : undefined,
+			selectedHostId === currentHostId ? activeProjectId : ALL_PROJECTS,
 			projects,
 			projectsKnown,
 		);
 		if (nextProjectId !== projectId) changeProject(nextProjectId);
-	}, [activeProjectId, projects, projectsKnown, projectId, routeProjectId]);
+	}, [activeProjectId, currentHostId, projects, projectsKnown, projectId, routeHostId, routeProjectId, selectedHostId]);
 
 	useEffect(() => {
-		if (!config) return;
+		const requestedHostId = selectedHostId;
+		if (!config || !requestedHostId) { setCatalog(null); setChatHarnesses([]); setLoading(false); return; }
 		let cancelled = false;
+		const generation = catalogGeneration.current;
 		setLoading(true);
 		Promise.all([getAgents(config), getSettings(config)])
 			.then(([c, settings]) => {
-				if (cancelled) return;
+				if (cancelled || !spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) return;
 				setCatalog(c);
 				setChatHarnesses(settings.chatHarnesses);
 				setCatalogError(null);
@@ -109,21 +139,20 @@ export default function SpawnModal() {
 			.catch((e) => {
 				// Previously swallowed into `catalog = null`, which left an empty
 				// picker and no way to tell the daemon was unreachable.
-				if (!cancelled) setCatalogError(agentErrorCopy(e));
+				if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setCatalogError(agentErrorCopy(e));
 			})
 			.finally(() => {
-				if (!cancelled) setLoading(false);
+				if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setLoading(false);
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [config, reloadKey]);
+	}, [config, reloadKey, selectedHostId]);
 
 	// Refreshing the catalog moved into the agent sheet route, which owns its own
 	// copy of it — see app/sheets/agent.tsx.
 	const allAgents = useMemo(() => rankAgents(catalog), [catalog]);
 	const agents = useMemo(() => mode === "chat" ? allAgents.filter((agent) => chatHarnesses.includes(agent.id)) : allAgents, [allAgents, chatHarnesses, mode]);
-	const project = projects.find((item) => item.id === projectId);
 	const projectWorkerAgent = projectDetail?.config?.worker?.agent ?? projectDetail?.agent ?? "";
 	const projectWorkerModel = projectDetail?.config?.worker?.agentConfig?.model ?? projectDetail?.config?.agentConfig?.model ?? "";
 	const resolvedModel = resolveSpawnModel({ selectedAgent: harness, projectWorkerAgent, projectWorkerModel });
@@ -132,7 +161,10 @@ export default function SpawnModal() {
 	// provider picks, and naming a model here promised one the session never ran.
 	const displayedModelLabel = displayedModel ? modelCatalog?.models.find((item) => item.id === displayedModel)?.label ?? displayedModel : "Automatic";
 	const modelSelection = modelTouched ? model : "__auto__";
-	const notices = spawnNotices({
+	const hostNotices = selectedHostId === null && hostSelectionInitialized.current
+		? [routeHostId ? "That machine is not connected." : "No connected machines are available."]
+		: [];
+	const notices = [...hostNotices, ...spawnNotices({
 		// Only when a reconnect can fix it: a rejected password stops the poll for
 		// good, and its catalog error already says to re-scan the pairing code.
 		offline: unreachable,
@@ -142,7 +174,7 @@ export default function SpawnModal() {
 		catalogError,
 		agentCount: agents.length,
 		modelError,
-	});
+	})];
 	const hasComposerMessage = Boolean(
 		notices.length > 0
 		|| attachmentError
@@ -153,19 +185,21 @@ export default function SpawnModal() {
 	);
 
 	useEffect(() => {
-		if (!config || !projectId) { setProjectDetail(undefined); setProjectDetailLoadedFor(null); return; }
+		const requestedHostId = selectedHostId;
+		if (!config || !requestedHostId || !projectId || projectId === STANDALONE_PROJECT) { setProjectDetail(undefined); setProjectDetailLoadedFor(null); return; }
 		let cancelled = false;
+		const generation = catalogGeneration.current;
 		setProjectDetailLoadedFor(null);
 		getProject(config, projectId)
-			.then((nextProject) => { if (!cancelled) setProjectDetail(nextProject); })
-			.catch((cause) => { if (!cancelled) setModelError(userFacingError(cause)); })
-			.finally(() => { if (!cancelled) setProjectDetailLoadedFor(projectId); });
+			.then((nextProject) => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setProjectDetail(nextProject); })
+			.catch((cause) => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setModelError(userFacingError(cause)); })
+			.finally(() => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setProjectDetailLoadedFor(projectId); });
 		return () => { cancelled = true; };
-	}, [config, projectId, reloadKey]);
+	}, [config, projectId, reloadKey, selectedHostId]);
 
 	useEffect(() => {
 		if (agentTouched || loading || !catalog) return;
-		if (projectId && projectDetailLoadedFor !== projectId) return;
+		if (projectId && projectId !== STANDALONE_PROJECT && projectDetailLoadedFor !== projectId) return;
 		const nextHarness = resolveSpawnAgent({
 			projectWorkerAgent: projectDetail?.config?.worker?.agent,
 			projectAgent: projectDetail?.agent,
@@ -175,15 +209,17 @@ export default function SpawnModal() {
 	}, [agentTouched, agents, catalog, loading, projectDetail, projectDetailLoadedFor, projectId]);
 
 	useEffect(() => {
-		if (!config || !projectId || !harness) { setModelCatalog(undefined); return; }
+		const requestedHostId = selectedHostId;
+		if (!config || !requestedHostId || !projectId || !harness) { setModelCatalog(undefined); setModelLoading(false); return; }
 		let cancelled = false;
+		const generation = catalogGeneration.current;
 		setModelLoading(true);
-		getAgentModels(config, harness, projectId)
-			.then((nextCatalog) => { if (!cancelled) { setModelCatalog(nextCatalog); setModelError(nextCatalog.warning); } })
-			.catch((cause) => { if (!cancelled) setModelError(userFacingError(cause)); })
-			.finally(() => { if (!cancelled) setModelLoading(false); });
+		getAgentModels(config, harness, projectId === STANDALONE_PROJECT ? undefined : projectId)
+			.then((nextCatalog) => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) { setModelCatalog(nextCatalog); setModelError(nextCatalog.warning); } })
+			.catch((cause) => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setModelError(userFacingError(cause)); })
+			.finally(() => { if (!cancelled && spawnHostRequestIsCurrent(generation, catalogGeneration.current, requestedHostId, selectedHostId)) setModelLoading(false); });
 		return () => { cancelled = true; };
-	}, [config, harness, projectId, reloadKey]);
+	}, [config, harness, projectId, reloadKey, selectedHostId]);
 
 	// Loads that failed while the desktop was unreachable run again once the
 	// board's poll reconnects. Keyed on the reconnect, not on the errors, so an
@@ -198,6 +234,25 @@ export default function SpawnModal() {
 
 	const clearModelOverride = () => { setModel(""); setModelTouched(false); };
 	const resetModelSource = () => { clearModelOverride(); setModelCatalog(undefined); setModelError(undefined); };
+	const chooseHost = (nextHostId: string) => {
+		if (nextHostId === selectedHostId) return;
+		catalogGeneration.current += 1;
+		setProjectId(null);
+		setHarness("");
+		setAgentTouched(false);
+		setCatalog(null);
+		setCatalogError(null);
+		setChatHarnesses([]);
+		setProjectDetail(undefined);
+		setProjectDetailLoadedFor(null);
+		setModelLoading(false);
+		resetModelSource();
+		setError(null);
+		setOfferTUI(false);
+		requestRef.current = undefined;
+		void selectSpawnHost(nextHostId, { select: setSelectedHostId, persistDefault: switchHost })
+			.catch(() => setError("Could not make that machine the default. Try again."));
+	};
 	const changeProject = (nextProjectId: string | null) => {
 		if (!spawnModelSourceChanged({ projectId, agentId: harness }, { projectId: nextProjectId, agentId: harness })) return;
 		resetModelSource();
@@ -275,6 +330,10 @@ export default function SpawnModal() {
 	};
 
 	const onSpawn = async () => {
+		if (!selectedHostId || !config) {
+			setError("Choose a connected machine before starting this task.");
+			return;
+		}
 		if (pickingAttachments.current) {
 			setAttachmentError("Wait for attachments to finish loading.");
 			return;
@@ -286,14 +345,22 @@ export default function SpawnModal() {
 		setError(null);
 		setOfferTUI(false);
 		try {
-			const session = await spawn({
+			const request = {
+				hostId: selectedHostId,
 				projectId: projectId ?? undefined,
 				prompt: prompt.trim() || undefined,
 				harness: harness || undefined,
 				model: modelOverride(displayedModel, modelTouched),
 				mode,
 				attachments: attachmentsRef.current.map(({ mimeType, data }) => ({ mimeType, data })),
-			});
+			};
+			const { attachments: _, ...requestFields } = request;
+			const payload = JSON.stringify(requestFields);
+			if (requestRef.current?.payload !== payload || requestRef.current?.attachments !== attachmentsRef.current) {
+				requestRef.current = { payload, attachments: attachmentsRef.current, id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}` };
+			}
+			const session = await spawn({ ...request, clientRequestId: requestRef.current.id });
+			if (projectId === STANDALONE_PROJECT) setActiveProject(ALL_PROJECTS);
 			haptics.success();
 			// Dismiss the modal first, then open the freshly spawned session's mode-aware surface
 			// once the dismiss transition has settled. Firing both navigations in the
@@ -306,7 +373,7 @@ export default function SpawnModal() {
 			InteractionManager.runAfterInteractions(() => {
 				router.push({
 					pathname: "/session/[id]",
-					params: { id: session.id, projectId: session.projectId },
+					params: { id: session.id, projectId: session.projectId, hostId: selectedHostId },
 				});
 			});
 		} catch (e) {
@@ -378,8 +445,11 @@ export default function SpawnModal() {
 				<KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
 				{Platform.OS === "ios" ? voiceFeedback : null}
 				<SpawnComposerControls
-					projects={projects.map((item) => ({ id: item.id, label: item.name }))}
-					projectId={project?.id ?? null}
+					hosts={hostOptions}
+					hostId={selectedHostId}
+					onSelectHost={chooseHost}
+					projects={[...projects.map((item) => ({ id: item.id, label: item.name, icon: "folder" as const })), { id: STANDALONE_PROJECT, label: "Standalone agent", icon: "message-square-plus" as const, sectionBreakBefore: true }]}
+					projectId={projectId}
 					onSelectProject={changeProject}
 					agents={agents.filter((item) => item.selectable).map((item) => ({ id: item.id, label: item.label }))}
 					harness={harness}
@@ -392,7 +462,7 @@ export default function SpawnModal() {
 					voice={{ state: voice.state, mode: voice.mode, onPressIn: voice.pressIn, onPressOut: voice.pressOut }}
 					onSpawn={() => { void onSpawn(); }}
 					busy={busy}
-					disabled={!projectId || !harness || busy || modelLoading || loading || listening || voice.state === "transcribing"}
+					disabled={!selectedHostId || !config || !projectId || !harness || busy || modelLoading || loading || listening || voice.state === "transcribing"}
 				/>
 				</KeyboardStickyView>
 		</View>

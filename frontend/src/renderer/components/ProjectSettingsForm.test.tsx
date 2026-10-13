@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
@@ -303,7 +303,7 @@ describe("ProjectSettingsForm", () => {
 				}),
 			),
 		);
-		expect(ensureAgentReadinessMock).toHaveBeenCalledWith();
+		expect(ensureAgentReadinessMock).toHaveBeenCalledWith({ hostId: undefined });
 		expect(screen.getByRole("button", { name: "Worker approval" })).toHaveTextContent("Auto");
 		expect(screen.queryByRole("button", { name: "Refresh agents" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Refresh worker model list" })).not.toBeInTheDocument();
@@ -496,7 +496,6 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(picker);
 		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
 		await userEvent.click(screen.getByRole("menuitemradio", { name: "Low" }));
-		expect(picker).toHaveTextContent("GPT Test · Low");
 		submitSettings();
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock.mock.calls[0][1].body.config.worker.agentConfig).toEqual(
@@ -521,8 +520,10 @@ describe("ProjectSettingsForm", () => {
 		});
 		renderSettings("proj-1", undefined, "agents");
 		const picker = await screen.findByRole("button", { name: "Worker model" });
-		expect(picker).toHaveTextContent("Claude Opus · Effort not reported");
+		expect(picker).toHaveTextContent("Opus · Medium");
+		expect(picker).not.toHaveTextContent("Claude");
 		await userEvent.click(picker);
+		expect(screen.getByRole("menuitem", { name: "Opus" })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /Reasoning effort/ }));
 		await userEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
 		submitSettings();
@@ -669,7 +670,7 @@ describe("ProjectSettingsForm", () => {
 
 		submitSettings();
 
-		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(putMock).toHaveBeenCalled());
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "proj-1" } },
 			body: {
@@ -716,12 +717,18 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
+		// The profile supplies the worker's agent, so the Agents tab does not ask
+		// for one.
 		renderSettings("proj-1", undefined, "agents");
+		expect(await screen.findByText("Worker")).toBeInTheDocument();
+		expect(screen.queryByText("Worker and orchestrator agents are required.")).not.toBeInTheDocument();
+		cleanup();
+		putMock.mockClear();
 
+		// The role profile pickers live on the Profiles tab.
+		renderSettings("proj-1", undefined, "profiles");
 		const workerProfile = await screen.findByRole("button", { name: "Worker profile" });
 		expect(workerProfile).toHaveTextContent("flash-coder");
-		// The profile supplies the worker's agent, so the required-agent warning stays quiet.
-		expect(screen.queryByText("Worker and orchestrator agents are required.")).not.toBeInTheDocument();
 		expect(await screen.findByText(/From the profile: Codex · flash-model/)).toBeInTheDocument();
 
 		await chooseOption(screen.getByRole("button", { name: "Orchestrator profile" }), "pro-expert");
@@ -1039,6 +1046,58 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const request = putMock.mock.calls[0]?.[1];
 		expect(request?.body.config.autoReview).toBe(false);
+	});
+
+	it("loads and saves whether workers request an AO review", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "general");
+
+		const toggle = await screen.findByRole("switch", { name: "Workers request AO review" });
+		expect(toggle).not.toBeChecked();
+
+		await userEvent.click(toggle);
+		expect(toggle).toBeChecked();
+
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const request = putMock.mock.calls[0]?.[1];
+		expect(request?.body.config.workersRequestReview).toBe(true);
+		expect(request?.body.config.reviewers).toBeUndefined();
+	});
+
+	// With no reviewer configured the daemon reviews with the default worker
+	// agent and its model, so the reviewer row must show that model.
+	it("shows the default worker model as the inherited reviewer model", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { model: "worker-model" } },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByRole("button", { name: "Reviewer agent" })).toHaveTextContent("Codex");
+		expect(await screen.findByRole("button", { name: "Reviewer model" })).toHaveTextContent("worker-model");
 	});
 
 	it("keeps the automatic default branch unpinned when saving other settings", async () => {
@@ -1732,7 +1791,7 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("status")).toHaveTextContent("Experimental host-trusted reviewer");
 	});
 
-	it("hides unknown-auth agents and offers management in project settings", async () => {
+	it("offers unknown-auth agents and management in project settings", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -1760,6 +1819,7 @@ describe("ProjectSettingsForm", () => {
 			"Goose",
 			"Kilo Code",
 			"Pi",
+			"KiroAuth unknown",
 			"Manage agents…",
 		]);
 		expect(options[8]).not.toHaveAttribute("aria-disabled", "true");

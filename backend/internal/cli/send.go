@@ -24,7 +24,9 @@ type sendOptions struct {
 // POST /api/v1/sessions/{id}/send. The CLI keeps its own copy so it need not
 // import httpd.
 type sendAPIRequest struct {
-	Message string `json:"message"`
+	UserAuthored    bool   `json:"userAuthored,omitempty"`
+	SenderSessionID string `json:"senderSessionId,omitempty"`
+	Message         string `json:"message"`
 }
 
 // sendAPIResponse carries the daemon's delivery receipt. A Chat session records
@@ -39,6 +41,7 @@ type sendAPIResponse struct {
 type conversationMessageAPIRequest struct {
 	Text            string `json:"text"`
 	ClientMessageID string `json:"clientMessageId"`
+	SenderSessionID string `json:"senderSessionId,omitempty"`
 	RecoverOnly     bool   `json:"recoverOnly,omitempty"`
 }
 
@@ -96,7 +99,7 @@ func (c *commandContext) sendMessage(ctx context.Context, opts sendOptions) erro
 	path := "sessions/" + url.PathEscape(session)
 	if !opts.steer {
 		var result sendAPIResponse
-		if err := c.postJSON(ctx, path+"/send", sendAPIRequest{Message: message}, &result); err != nil {
+		if err := c.postJSON(ctx, path+"/send", sendAPIRequest{Message: message, SenderSessionID: strings.TrimSpace(os.Getenv("AO_SESSION_ID")), UserAuthored: strings.TrimSpace(os.Getenv("AO_SESSION_ID")) == ""}, &result); err != nil {
 			return err
 		}
 		if result.Delivery == "queued" {
@@ -119,7 +122,7 @@ func (c *commandContext) steerMessage(
 	}
 	var result steerOrSendAPIResponse
 	err := c.postJSON(ctx, sessionPath+"/conversation/steer-or-send", conversationMessageAPIRequest{
-		Text: message, ClientMessageID: clientMessageID, RecoverOnly: recoverOnly,
+		Text: message, ClientMessageID: clientMessageID, SenderSessionID: strings.TrimSpace(os.Getenv("AO_SESSION_ID")), RecoverOnly: recoverOnly,
 	}, &result)
 	if err != nil {
 		var responseErr apiResponseError

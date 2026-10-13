@@ -161,6 +161,7 @@ vi.mock("../hooks/useRestoreSession", () => ({
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => workspaceQueryMock(),
+	useRemoteWorkspaces: () => ({ data: [], failedHostIds: [], loadedProjectHostIds: [], loadedSessionHostIds: [], refetch: vi.fn() }),
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -706,6 +707,19 @@ describe("NotificationCenter", () => {
 		await clickOpen();
 
 		await userEvent.click(screen.getByRole("link", { name: "Open PR #67" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/app/pull/67");
+		expect(navigateMock).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("lets Enter on the nested PR link act on the link without opening the session", async () => {
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderNotificationCenter();
+		await clickOpen();
+
+		screen.getByRole("link", { name: "Open PR #67" }).focus();
+		await userEvent.keyboard("{Enter}");
 
 		expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/app/pull/67");
 		expect(navigateMock).not.toHaveBeenCalled();

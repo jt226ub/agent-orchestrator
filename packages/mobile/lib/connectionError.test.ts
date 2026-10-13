@@ -33,6 +33,11 @@ describe("classifyConnectionFailure", () => {
 	it("maps 429 to rate-limited", () => {
 		expect(classifyConnectionFailure(429)).toBe("rate-limited");
 	});
+	it("names an incompatible host and stops polling it", () => {
+		expect(classifyConnectionFailure(426)).toBe("incompatible-host");
+		expect(describeConnectionFailure("incompatible-host", target()).message).toContain("Update Orchestrator");
+		expect(shouldKeepPolling(426)).toBe(false);
+	});
 
 	it("maps any other status to a server error", () => {
 		expect(classifyConnectionFailure(500)).toBe("server-error");
@@ -131,7 +136,7 @@ describe("describeConnectionFailure", () => {
 		expect(titles.every((t) => t.length > 0)).toBe(true);
 		expect(new Set(titles).size).toBe(titles.length);
 		expect(describeConnectionFailure("auth", target()).title).not.toContain("disconnected");
-		expect(describeConnectionFailure("unreachable", target()).title).toContain("disconnected");
+		expect(describeConnectionFailure("unreachable", target()).title).toContain("offline");
 	});
 
 	it("explains the lockout on a 429, and that it clears itself", () => {
@@ -140,14 +145,14 @@ describe("describeConnectionFailure", () => {
 		expect(d.message).toContain("about a minute");
 	});
 
-	it("points at the desktop logs on a server error", () => {
+	it("points at the machine logs on a server error", () => {
 		const d = describeConnectionFailure("server-error", target());
-		expect(d.message).toContain("AO logs");
+		expect(d.message).toContain("Orchestrator logs");
 	});
 
 	it("rejects a non-AO QR code without mentioning the network", () => {
 		const d = describeConnectionFailure("not-ao-qr", target());
-		expect(d.message).toContain("isn't an AO pairing code");
+		expect(d.message).toContain("isn't an Orchestrator pairing code");
 		expect(d.showLocalNetworkHint).toBe(false);
 	});
 
@@ -232,8 +237,8 @@ describe("userFacingError", () => {
 
 	it("falls back to status-specific copy when the daemon said nothing", () => {
 		const bare = (status: number) => Object.assign(new Error(`${status} `), { status });
-		expect(userFacingError(bare(404))).toBe("That's no longer on your desktop. Refresh and try again.");
-		expect(userFacingError(bare(409))).toMatch(/changed on your desktop/);
+		expect(userFacingError(bare(404))).toBe("That's no longer on your machine. Refresh and try again.");
+		expect(userFacingError(bare(409))).toMatch(/changed on your machine/);
 		expect(userFacingError(bare(422))).toMatch(/couldn't complete that/);
 	});
 

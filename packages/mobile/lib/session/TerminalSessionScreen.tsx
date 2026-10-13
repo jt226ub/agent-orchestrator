@@ -5,8 +5,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ActivityIndicator, Alert, BackHandler, Keyboard, LayoutAnimation, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
-import { ApiError, getPreview, isTerminalStatus, killSession, killSessionReviewer, sendMessage } from "../api";
-import { authHeaders, isConfigured, loadConfig, type ServerConfig } from "../config";
+import { ApiError, getPreview, killSession, killSessionReviewer, sendMessage } from "../api";
+import { authHeaders, isConfigured, type ServerConfig } from "../config";
+import { previewForConfig } from "../hostRoute";
 import { terminalTheme, type Theme } from "../theme";
 import { haptics } from "../haptics";
 import { resetHeaderRightForSwap } from "../headerRightSwap";
@@ -38,10 +39,11 @@ import {
 } from "./useInterfaceTransition";
 import { terminalInterfaceFailureRecovery } from "./terminalInterfaceRecovery";
 import { adjustTerminalViewport } from "./terminalViewport";
-import type { RouteSession } from "./sessionRoute";
+import { isRuntimeGone, type RouteSession } from "./sessionRoute";
 import { iconSize, press, space, type } from "../tokens";
 import { backOr } from "../backNavigation";
 import { userFacingError } from "../connectionError";
+import { archiveSessionMessage } from "../worker-action-model";
 import { isTerminalGoneError, TERMINAL_STATUS_LABEL, terminalErrorCopy, terminalExitedCopy } from "./terminalCopy";
 
 const FONT_SIZE = 12;
@@ -551,7 +553,7 @@ const statusColorFor = (t: Theme): Record<MuxStatus, string> => ({
 function terminalInterfacePhaseLabel(phase?: string): string {
 	switch (phase) {
 		case "draining":
-			return "Waiting for the current terminal turn to finish. New AO messages are queued safely.";
+			return "Waiting for the current terminal turn to finish. New messages are queued safely.";
 		case "source_stopping":
 			return "Stopping the terminal controller before Chat starts.";
 		case "source_stopped":
@@ -575,7 +577,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	const t = useTheme();
 	const { scheme } = useThemeState();
 	const styles = useThemedStyles(makeStyles);
-	const params = useLocalSearchParams<{ id?: string; handleId?: string; projectId?: string; sessionId?: string; title?: string; kind?: string }>();
+	const params = useLocalSearchParams<{ id?: string; handleId?: string; projectId?: string; sessionId?: string; title?: string; kind?: string; hostId?: string }>();
 	const shellOnly = Boolean(params.handleId);
 	// A reviewer pane is attached by handle like a shell, but the daemon does not
 	// own it as a shell terminal: closing it means stopping the worker's reviewer.
@@ -616,7 +618,6 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	// full-screen TUI doesn't mis-render. The WebView crops/scales it locally.
 	const authRef = useRef<{ cols: number; rows: number } | null>(null);
 
-	const [cfg, setCfg] = useState<ServerConfig | null>(null);
 	const [status, setStatus] = useState<MuxStatus>("connecting");
 	const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
 	const [banner, setBanner] = useState<string | null>(null);
@@ -637,10 +638,11 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	// green dot when the agent has produced something to view (any previewable file
 	// except the repo README); the user taps it to open.
 	const [browserOpen, setBrowserOpen] = useState(false);
-	const [preview, setPreview] = useState<{ entry: string; url: string } | null>(null);
+	const [loadedPreview, setLoadedPreview] = useState<{ config: ServerConfig; id: string; value: Awaited<ReturnType<typeof getPreview>> } | null>(null);
 	const previewWebRef = useRef<WebView>(null);
 
 	const { sessions, orchestrators, restore, refresh, config: activeConfig } = useApp();
+	const preview = loadedPreview?.id === id ? previewForConfig(loadedPreview, activeConfig, params.hostId) : null;
 	const known =
 		sessions.find((s) => s.id === sessionId) ??
 		orchestrators.find((o) => o.id === sessionId) ??
@@ -650,7 +652,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	// tmux. Older daemons omit terminalHandleId and retain the historical
 	// session-id handle, which keeps the fallback backward-compatible.
 	const terminalHandleId = shellOnly ? id : known?.terminalHandleId || id;
-	const interfaceSwitch = useInterfaceTransition(cfg, shellOnly ? "" : sessionId, refresh);
+	const interfaceSwitch = useInterfaceTransition(activeConfig, shellOnly ? "" : sessionId, refresh);
 	// Owned by the screen rather than the hook: the background poll calls the same
 	// `refresh()`, so a hook-wide busy flag would let a poll tick disable the
 	// user's own button and swallow the very tap the recheck exists to serve.
@@ -686,7 +688,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	const interfaceTransitionNoticeText =
 		interfaceTransitionNotice?.errorDetail ||
 		(interfaceTransitionRecovered
-			? "AO restored the session in its last committed interface."
+			? "Orchestrator restored the session in its last committed interface."
 			: interfaceTransitionNotice?.phase === "recovery_required"
 				? "The interface switch needs recovery before more work is sent."
 				: "The interface switch failed; Terminal UI remains available.");
@@ -702,7 +704,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 			known.activity === "waiting_input" ||
 			known.activity === "blocked"),
 	);
-	const dead = notFound || (!shellOnly && known ? isTerminalStatus(known.status) : false);
+	const dead = notFound || (!shellOnly && known ? isRuntimeGone(known) : false);
 	// What counts as a live preview: any file the daemon surfaces (an .html build, or
 	// a generated doc like plan.md / a report) EXCEPT a repo's README, which the
 	// detector's markdown fallback always matches on a fresh checkout. Filtering the
@@ -806,19 +808,14 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	// Wi-Fi hands the session to Tailscale or the tunnel — and a mux still
 	// pointed at the previous address stays disconnected on a blank screen
 	// until the screen is closed and reopened.
-	const activeBaseUrl = activeConfig
-		? `${activeConfig.secure ? "https" : "http"}://${activeConfig.host}:${activeConfig.httpPort}`
-		: "";
-
 	useEffect(() => {
 		let disposed = false;
 		(async () => {
-			// Prefer the endpoint the race settled on; fall back to storage on the
-			// first render, before the store has resolved one.
-			const config = activeConfig ?? (await loadConfig());
+			// A selected machine without a verified connection has no terminal.
+			// The global saved config may belong to a different machine.
+			const config = activeConfig;
 			if (disposed) return;
-			setCfg(config);
-			if (!isConfigured(config)) return;
+			if (!config || !isConfigured(config)) return;
 
 			const mux = new MuxClient(config, {
 				onStatus: (s) => setStatus(s),
@@ -862,11 +859,9 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 			xtermReadyRef.current = false;
 			pendingOutputRef.current = [];
 		};
-		// activeBaseUrl, not activeConfig: the object identity changes on every
-		// resolve, and rebuilding the mux on each one would tear down a healthy
-		// terminal for no reason.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [terminalHandleId, activeBaseUrl]);
+		// The store preserves config identity when the endpoint and credential
+		// did not change, so this also handles two hosts sharing one URL.
+	}, [terminalHandleId, activeConfig]);
 
 	useLayoutEffect(() => {
 		xtermReadyRef.current = false;
@@ -878,14 +873,14 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	// repo README, so auto-popping would surface a blank/unbuilt page.
 	useEffect(() => {
 		if (shellOnly) return;
-		if (!cfg || !isConfigured(cfg)) return;
+		if (!activeConfig || !isConfigured(activeConfig)) return;
 		let cancelled = false;
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const tick = async () => {
 			try {
-				const p = await getPreview(cfg, id);
+				const p = await getPreview(activeConfig, id);
 				if (cancelled) return;
-				setPreview(p);
+				setLoadedPreview({ config: activeConfig, id, value: p });
 			} catch {
 				/* transient - keep polling */
 			}
@@ -896,7 +891,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 			cancelled = true;
 			if (timer) clearTimeout(timer);
 		};
-	}, [cfg, id, shellOnly]);
+	}, [activeConfig, id, shellOnly]);
 
 	// The WebView reports the phone's NATURAL fit (proposeDimensions, measure-only).
 	// We forward it to the daemon as this client's requested size — used only when
@@ -998,8 +993,8 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 		}
 		setSending(true);
 		try {
-			const config = cfg ?? (await loadConfig());
-			await sendMessage(config, id, text);
+			if (!activeConfig) throw new Error("No active machine connection");
+			await sendMessage(activeConfig, id, text);
 			haptics.success();
 			setMsg("");
 		} catch (e) {
@@ -1019,7 +1014,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 		} finally {
 			setSending(false);
 		}
-	}, [msg, sendTarget, cfg, id, terminalHandleId, projectId, status]);
+	}, [msg, sendTarget, activeConfig, id, terminalHandleId, projectId, status]);
 
 	// Push-to-talk dictation, captured on the PHONE rather than by the harness.
 	//
@@ -1151,7 +1146,7 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 			"Switch to Chat?",
 			known?.activity === "waiting_input" || known?.activity === "blocked"
 				? "This turn is waiting for your input. Finish waits for your answer; stop cancels it and switches now."
-				: "Keep the same AO session, worktree, and native agent conversation.",
+				: "Keep the same Orchestrator session, worktree, and native agent conversation.",
 			[
 				{ text: "Keep Terminal UI", style: "cancel" },
 				{ text: "Finish, then switch", onPress: () => void startInterfaceSwitch("drain") },
@@ -1241,35 +1236,35 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
 			try {
-				const config = cfg ?? (await loadConfig());
-				if (reviewerPane) await killSessionReviewer(config, String(params.sessionId));
-				else if (shellOnly) await closeShellTerminal(config, id);
-				else await killSession(config, id);
+				if (!activeConfig) throw new Error("No active machine connection");
+				if (reviewerPane) await killSessionReviewer(activeConfig, String(params.sessionId));
+				else if (shellOnly) await closeShellTerminal(activeConfig, id);
+				else await killSession(activeConfig, id);
 				haptics.success();
 				leave();
 			} catch (e) {
 				haptics.error();
-				setBanner(`Couldn't stop the session. ${userFacingError(e)}`);
+				setBanner(`${reviewerPane ? "Couldn't stop the reviewer" : shellOnly ? "Couldn't close the shell" : "Couldn't archive the session"}. ${userFacingError(e)}`);
 			}
 		};
 		if (Platform.OS === "web") {
 			doKill();
 			return;
 		}
-		// Cautionary buzz as the destructive confirmation dialog is raised.
-		haptics.warning();
 		if (reviewerPane) {
+			haptics.warning();
 			Alert.alert("Stop reviewer session?", "This closes the persistent reviewer and cancels any review it is currently running. Review history is preserved.", [
 				{ text: "Keep reviewer", style: "cancel" },
 				{ text: "Stop reviewer", style: "destructive", onPress: doKill },
 			]);
 			return;
 		}
-		Alert.alert(shellOnly ? "Close shell?" : "Kill session?", shellOnly ? "This stops the worktree shell." : `This stops ${id}.`, [
+		haptics.warning();
+		Alert.alert(shellOnly ? "Close shell?" : "Archive session?", shellOnly ? "This stops the worktree shell." : archiveSessionMessage(id), [
 			{ text: "Cancel", style: "cancel" },
-			{ text: shellOnly ? "Close" : "Kill", style: "destructive", onPress: doKill },
+			{ text: shellOnly ? "Close" : "Archive session", style: "destructive", onPress: doKill },
 		]);
-	}, [cfg, id, leave, params.sessionId, reviewerPane, shellOnly]);
+	}, [activeConfig, id, leave, params.sessionId, reviewerPane, shellOnly]);
 
 	// Restore a terminated session: the daemon re-attaches its worktree agent and
 	// its PTY comes back, so we re-open the terminal once restore succeeds.
@@ -1343,10 +1338,10 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 		[],
 	);
 
-	if (cfg && !isConfigured(cfg)) {
+	if (activeConfig && !isConfigured(activeConfig)) {
 		return (
 			<View style={styles.center}>
-				<Text style={styles.bannerText}>No desktop paired.</Text>
+				<Text style={styles.bannerText}>No machine paired.</Text>
 			</View>
 		);
 	}
@@ -1405,15 +1400,15 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 						<Text style={styles.restoreText}>{restoring ? "Restoring…" : "Restore"}</Text>
 					</Pressable>
 				) : (
-					// Icon-only: the trash glyph reads as "destroy this session" on its
-					// own, so the label would only cost width. Hence accessibilityLabel.
+					// Icon-only: the archive glyph matches the restorable action on the
+					// workers board. The accessible label carries the full operation.
 					<Pressable
 						hitSlop={8}
-						accessibilityLabel={shellOnly ? "Close shell" : "Kill session"}
+						accessibilityLabel={shellOnly ? "Close shell" : "Archive session"}
 						onPress={confirmKill}
 						style={({ pressed }) => [styles.killBtn, pressed && { opacity: press.opacity }]}
 					>
-						<Feather name={shellOnly ? "x" : "trash-2"} size={iconSize.sm} color={t.red} />
+						<Feather name={shellOnly ? "x" : "archive"} size={iconSize.sm} color={shellOnly ? t.red : t.textSecondary} />
 					</Pressable>
 				)}
 			</View>
@@ -1554,9 +1549,9 @@ export default function TerminalScreen({ session: resolved }: { session?: RouteS
 							ref={previewWebRef}
 							// The preview route lives behind the daemon's connection-password
 							// auth (Bearer). Without this header the WebView's request 401s and
-							// renders the JSON error body instead of the page. cfg carries the
-							// password we paired with; authHeaders() turns it into the Bearer.
-							source={{ uri: preview.url, headers: cfg ? authHeaders(cfg) : undefined }}
+							// renders the JSON error body instead of the page. The active
+							// machine's credential is the only one this screen may send.
+							source={{ uri: preview.url, headers: preview.authenticated && activeConfig ? authHeaders(activeConfig) : undefined }}
 							originWhitelist={["*"]}
 							style={styles.browserWeb}
 							onError={() => setBanner("Couldn't load the preview.")}
