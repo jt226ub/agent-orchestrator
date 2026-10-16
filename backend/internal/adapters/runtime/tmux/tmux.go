@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -77,6 +78,7 @@ type Runtime struct {
 	reapSessions   func(ctx context.Context, pids []int, grace time.Duration)
 	socketMu       sync.RWMutex
 	sessionSockets map[string]string
+	sendSeq        atomic.Uint64
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -846,18 +848,29 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
+		// The text goes into a tmux buffer and is pasted in one piece with -p,
+		// which tmux wraps in a bracketed paste when the program asked for one.
+		// Typed with send-keys, Claude Code's paste detection split a long
+		// message, dropped the head and submitted the tail as its own prompt,
+		// so the delivery envelope never reached the prompt hook.
+		buffer := sendBufferName(id, r.sendSeq.Add(1))
 		messageChunks := chunks(message, r.chunkSize)
+		steps := make([][]string, 0, len(messageChunks)+1)
+		for i, chunk := range messageChunks {
+			steps = append(steps, setBufferArgs(buffer, chunk, i > 0))
+		}
+		steps = append(steps, pasteBufferArgs(id, buffer))
 		sendCtx := ctx
 		var finishCancel context.CancelFunc
-		for i, chunk := range messageChunks {
-			if _, err := r.runForSession(sendCtx, id, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		for i, step := range steps {
+			if _, err := r.runForSession(sendCtx, id, step...); err != nil {
 				if finishCancel != nil {
 					finishCancel()
 				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
 			if i == 0 {
-				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				completionBudget := sendCompletionBudget(len(steps), r.timeout, r.enterDelay)
 				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
 				sendCtx = enterCtx
 			}

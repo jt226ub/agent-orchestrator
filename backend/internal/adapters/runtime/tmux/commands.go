@@ -148,6 +148,30 @@ func sendKeysLiteralArgs(id, chunk string) []string {
 	return []string{"send-keys", "-t", id, "-l", chunk}
 }
 
+// sendBufferName names the tmux paste buffer for one message; seq keeps two
+// concurrent sends to the same session from sharing a buffer.
+func sendBufferName(id string, seq uint64) string {
+	return fmt.Sprintf("ao-send-%s-%d", id, seq)
+}
+
+// setBufferArgs builds args for `tmux set-buffer [-a] -b <buffer> -- <chunk>`;
+// -a appends the chunks after the first, and -- keeps a chunk that starts with
+// "-" from being read as a flag.
+func setBufferArgs(buffer, chunk string, appendChunk bool) []string {
+	args := []string{"set-buffer"}
+	if appendChunk {
+		args = append(args, "-a")
+	}
+	return append(args, "-b", buffer, "--", chunk)
+}
+
+// pasteBufferArgs builds args for `tmux paste-buffer -d -p -r -b <buffer> -t <id>`:
+// -p brackets the paste when the program enabled bracketed paste, -r keeps
+// newlines as LF like send-keys did, and -d deletes the buffer afterwards.
+func pasteBufferArgs(id, buffer string) []string {
+	return []string{"paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", id}
+}
+
 // sendEnterArgs builds args for `tmux send-keys -t <id> Enter` to submit the
 // queued input.
 func sendEnterArgs(id string) []string {
