@@ -22,6 +22,32 @@ func TestReportDeliveryEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+// Claude Code wraps a pasted prompt in a <pasted_content> tag before it reaches
+// UserPromptSubmit hooks; the delivery id must still be found inside it, or
+// the batch is never acknowledged and is re-delivered forever.
+func TestCoordinationDeliveryIDInsidePastedContent(t *testing.T) {
+	report := WrapReportDelivery("report-batch:rpt_75dd44e5", "Reports since your previous turn:\ncomplete")
+	session := WrapSessionDelivery("session-send:17292b96", "hello")
+	for _, tc := range []struct{ prompt, want string }{
+		{"\n\n<pasted_content id=\"083c\">\n" + report + "\n</pasted_content id=\"083c\">", "report-batch:rpt_75dd44e5"},
+		{"<pasted_content id=\"083c\">\n" + report[:len(report)-30] + "\n</pasted_content id=\"083c\">\n\ntail\n</ao-report-delivery>", "report-batch:rpt_75dd44e5"},
+		{"<pasted_content id=\"1a\">\n" + session + "\n</pasted_content id=\"1a\">", "session-send:17292b96"},
+	} {
+		if got, ok := CoordinationDeliveryID(tc.prompt); !ok || got != tc.want {
+			t.Fatalf("CoordinationDeliveryID(%q) = %q, %v; want %q", tc.prompt, got, ok, tc.want)
+		}
+	}
+	for _, invalid := range []string{
+		"<pasted_content id=\"083c\">\nordinary prompt\n</pasted_content id=\"083c\">",
+		"<pasted_content id=\"083c\">",
+		"user text <pasted_content id=\"083c\">\n" + report + "\n</pasted_content id=\"083c\">",
+	} {
+		if got, ok := CoordinationDeliveryID(invalid); ok {
+			t.Fatalf("CoordinationDeliveryID(%q) = %q, true", invalid, got)
+		}
+	}
+}
+
 func TestValidateReportContent(t *testing.T) {
 	pr := "https://github.com/owner/repo/pull/42"
 	tests := []struct {

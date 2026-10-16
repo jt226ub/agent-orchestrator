@@ -23,8 +23,20 @@ func ReportDeliveryID(message string) (string, bool) {
 	return deliveryID(message, reportDeliveryPrefix)
 }
 
+// pastedContentPrefix opens the tag Claude Code wraps around pasted text
+// before handing the prompt to UserPromptSubmit hooks. AO delivers by paste, so
+// the envelope can arrive inside it.
+const pastedContentPrefix = "<pasted_content"
+
 func deliveryID(message, prefix string) (string, bool) {
 	message = strings.TrimSpace(message)
+	if strings.HasPrefix(message, pastedContentPrefix) {
+		end := strings.Index(message, ">")
+		if end < 0 {
+			return "", false
+		}
+		message = strings.TrimSpace(message[end+1:])
+	}
 	if !strings.HasPrefix(message, prefix) {
 		return "", false
 	}
