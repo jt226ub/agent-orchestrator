@@ -552,6 +552,62 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	}
 }
 
+// A program that turned bracketed paste on gets the whole message as one
+// marked paste. Sent as bare keystroke bursts, Claude Code split a long
+// report delivery and lost its opening envelope, so AO re-delivered it forever.
+func TestSendMessage_UsesBracketedPasteWhenProgramEnabledIt(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	ctx := context.Background()
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{SessionID: "sess-bp", WorkspacePath: "/tmp/w", Argv: []string{"sh"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := hosts["sess-bp"]
+	defer h.cleanup(t)
+	if _, err := h.pty.WriteOutput([]byte("\x1b[?2004hprompt> ")); err != nil {
+		t.Fatalf("WriteOutput: %v", err)
+	}
+	for start := time.Now(); !bytes.Contains(h.ring.Replay(), []byte("prompt>")); time.Sleep(10 * time.Millisecond) {
+		if time.Since(start) > 2*time.Second {
+			t.Fatal("program output never reached the ring")
+		}
+	}
+
+	inputC := make(chan []byte, 64)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := h.pty.inR.Read(buf)
+			if n > 0 {
+				inputC <- append([]byte(nil), buf[:n]...)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	msg := strings.Repeat("line of a long report\n", 60)
+	if err := rt.SendMessage(ctx, handle, msg); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	var received []byte
+	deadline := time.After(3 * time.Second)
+	for !bytes.HasSuffix(received, []byte("\r")) {
+		select {
+		case chunk := <-inputC:
+			received = append(received, chunk...)
+		case <-deadline:
+			t.Fatalf("timeout waiting for PTY input; got %d bytes", len(received))
+		}
+	}
+	want := "\x1b[200~" + msg + "\x1b[201~\r"
+	if string(received) != want {
+		t.Fatalf("PTY input = %q...%q, want the message inside one bracketed paste then \\r", received[:20], received[len(received)-20:])
+	}
+}
+
 func TestSendInputDeliversEscapeByte(t *testing.T) {
 	isolateRegistry(t)
 	hosts := map[string]*inProcHost{}

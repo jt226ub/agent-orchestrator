@@ -22,6 +22,14 @@ const (
 	// ptyInputEnterDelay is the pause before sending Enter. Mirrors PTY_INPUT_ENTER_DELAY_MS.
 	ptyInputEnterDelay = 300 * time.Millisecond
 
+	// pasteModeProbeTimeout bounds the wait for the attach snapshot that tells
+	// the sender whether the program has bracketed paste on. A host sends it at
+	// once when it has output or modes to replay; an empty one sends nothing.
+	pasteModeProbeTimeout = 300 * time.Millisecond
+
+	bracketedPasteStart = "\x1b[200~"
+	bracketedPasteEnd   = "\x1b[201~"
+
 	dialTimeout      = 3 * time.Second
 	getOutputTimeout = 3 * time.Second
 	isAliveTimeout   = 2 * time.Second
@@ -60,6 +68,15 @@ func clientSendMessage(addr, message string) error {
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Sent as separate keystroke bursts, a long message is split by a TUI's
+	// paste detection: Claude Code took the first 512-rune frame as a paste,
+	// dropped it, and submitted the rest as its own prompt, so the delivery
+	// envelope never reached the prompt hook. When the program has asked for
+	// bracketed paste, mark the whole message as one paste instead.
+	if len(message) > 0 && programWantsBracketedPaste(conn) {
+		message = bracketedPasteStart + message + bracketedPasteEnd
+	}
+
 	runes := []rune(message)
 	for i := 0; i < len(runes); i += ptyInputChunkRunes {
 		end := i + ptyInputChunkRunes
@@ -93,6 +110,38 @@ func clientSendMessage(addr, message string) error {
 	}
 	_, err = conn.Write(frame)
 	return err
+}
+
+// programWantsBracketedPaste reads the snapshot the host sends every new
+// connection (ring replay prefixed with the modes it no longer carries) and
+// reports whether the program has bracketed paste (?2004) on. No snapshot
+// within pasteModeProbeTimeout means no output and no modes, so plain input.
+func programWantsBracketedPaste(conn net.Conn) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(pasteModeProbeTimeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	var snapshot []byte
+	done := false
+	parser := NewMessageParser(func(msgType byte, payload []byte) {
+		if msgType == MsgTerminalData && !done {
+			snapshot, done = payload, true
+		}
+	})
+	buf := make([]byte, 64*1024)
+	for !done {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			parser.Feed(buf[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+	if !done {
+		return false
+	}
+	modes := newModeTracker()
+	_, _ = modes.Write(snapshot)
+	return modes.st.bracketedPaste
 }
 
 func clientSendInput(addr, input string) error {
